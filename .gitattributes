@@ -1,0 +1,6 @@
+# GitHub Linguist: this is a Markdown skills bundle; count the skill documents, 
+# not the bundled helper tooling, in the repository language statistics.
+*.md linguist-detectable
+**/*.py linguist-vendored
+install.sh linguist-vendored
+install.ps1 linguist-vendored
