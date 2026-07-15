@@ -40,7 +40,7 @@ skills write are standard Modelica `.mo` files you can open in any Modelica tool
 | Capability | What the assistant does |
 |---|---|
 | **Architect** | Decide component decomposition, connectors and structure before writing equations |
-| **Create** | Write a working Modelica model from a plain-language description |
+| **Create** | Write a Modelica model from a plain-language description |
 | **Validate & simulate** | Check that a model compiles, then run it |
 | **Diagnose** | Explain why a model is slow or failing |
 | **Plot** | Plot simulation results and store those plots back inside the model |
