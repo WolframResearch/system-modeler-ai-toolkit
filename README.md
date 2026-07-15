@@ -40,7 +40,7 @@ skills write are standard Modelica `.mo` files you can open in any Modelica tool
 | Capability | What the assistant does |
 |---|---|
 | **Architect** | Decide component decomposition, connectors and structure before writing equations |
-| **Create** | Build hydraulic circuit models, grounded in System Modeler's Hydraulic library so it doesn't invent component or parameter names |
+| **Create** | Write a working Modelica model from a plain-language description |
 | **Validate & simulate** | Check that a model compiles, then run it |
 | **Diagnose** | Explain why a model is slow or failing |
 | **Plot** | Plot simulation results and store those plots back inside the model |
@@ -48,6 +48,22 @@ skills write are standard Modelica `.mo` files you can open in any Modelica tool
 | **Annotate** | Turn a text-only model into a proper schematic |
 | **Add control panels** | Add interactive sliders, checkboxes and menus for tuning parameters in the Explore view of Simulation Center (System Modeler's simulation GUI) |
 | **Post-process** | Run parameter sweeps, calibration and ML on simulation results in Wolfram Language |
+
+## How it works
+
+Describe what you want, get a checked model back, then refine and analyze—all
+in plain language. The modeling, compiling and simulating run for you.
+
+```mermaid
+flowchart LR
+    A["<b>1 · Describe</b><br/>say what you want,<br/>in plain language"]
+    B["<b>2 · Build</b><br/>the model is architected<br/>and written as Modelica"]
+    C["<b>3 · Check</b><br/>validated, simulated<br/>and plotted"]
+    D["<b>4 · Refine</b><br/>ask for changes—diagram,<br/>control panel, plots"]
+    E["<b>5 · Analyze</b><br/>sweeps, calibration, ML<br/>in Wolfram Language"]
+    A --> B --> C --> D --> E
+    D -. repeat any time .-> B
+```
 
 ## Get started in 3 steps
 
