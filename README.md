@@ -25,14 +25,14 @@ The skills **create, validate, simulate, diagnose, plot, animate and document** 
 and **post-process** results with Wolfram Language. They also look up answers
 from the Modelica and System Modeler documentation.
 
-Compiling and simulating runs on System Modeler's kernel—but the models the
+Compiling and simulating run on System Modeler's kernel—but the models the
 skills write are standard Modelica `.mo` files you can open in any Modelica tool.
 
 > [!TIP]
 > **New to Modelica?** It's the open modeling language that System Modeler is built
 > on—the textual form behind the drag-and-drop diagrams, stored in `.mo` files.
 > These skills read and write that text, so your assistant can build and check
-> models as code. See [What is Modelica?](https://www.wolfram.com/system-modeler/resources/what-is-modelica/)
+> models as code. See [What Is Modelica?](https://www.wolfram.com/system-modeler/resources/what-is-modelica/)
 > for a short introduction.
 
 ## What's inside
@@ -65,20 +65,20 @@ flowchart LR
     D -. repeat any time .-> B
 ```
 
-## Get started in 3 steps
+## Get started in three steps
 
 ### 1. Get the folder
 
 Clone this repository or download it as a ZIP (*Code → Download ZIP* on GitHub)
 and uncompress it. Keep it as one folder; don't move the pieces apart. To update
-later, `git pull` (or re-download).
+later, `git pull` (or redownload).
 
 ### 2. Start your AI assistant in it
 
 Point your assistant at the **uncompressed folder** so it can read the files
 and run commands. In a terminal, open the folder and start the assistant there
 (run `claude` for Claude Code, `codex` for Codex); in a desktop app such as the
-Claude desktop app, choose this folder as the session's project folder.
+Claude Desktop app, choose this folder as the session's project folder.
 
 ### 3. Ask it to read `InstallationGuide.md`
 
@@ -90,7 +90,7 @@ simulation features, **Wolfram System Modeler**
 ([free 30-day trial](https://www.wolfram.com/system-modeler/trial/)) plus a
 C++ compiler; and for post-processing, **Wolfram Language** connected to the
 assistant via the
-[Wolfram MCP server](https://www.wolfram.com/artificial-intelligence/mcp/local/).
+[Wolfram Local MCP](https://www.wolfram.com/artificial-intelligence/mcp/local/).
 It will flag anything missing; just follow its prompts.
 
 That's it—now try it out. Ask for something real, for example:
@@ -117,8 +117,8 @@ documentation bundled with `search-modelica-docs`:
 
 - **Modelica Language Specification** excerpts (`docsearch/data/spec.json`)—licensed
   by the Modelica Association under
-  [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) and remain
-  under that license
+  [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) and
+  distributed here under the same license
 - **Modelica Standard Library** reference (`docsearch/data/msl.json`)—©
   Modelica Association and contributors, under the
   [BSD 3-Clause License](https://github.com/modelica/ModelicaStandardLibrary/blob/master/LICENSE)
