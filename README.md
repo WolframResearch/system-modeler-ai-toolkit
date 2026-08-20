@@ -9,13 +9,11 @@
 [![Wolfram System Modeler](https://img.shields.io/badge/Wolfram-System%20Modeler-DD1100.svg)](https://www.wolfram.com/system-modeler/)
 ![Platforms](https://img.shields.io/badge/Platforms-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)
 
-[![Give your AI assistant System Modeler skills (video, 1:50)](images/intro-video-thumbnail.png)](https://vimeo.com/1210547989)
-
-**[Watch the intro video (1:50)](https://vimeo.com/1210547989)**
-
 [**Download a free 30-day System Modeler trial →**](https://www.wolfram.com/system-modeler/trial/)
 
 </div>
+
+https://github.com/user-attachments/assets/603f8f2d-5788-4862-ad21-6f922516453b
 
 A bundle of skills that let an AI coding assistant—[**Claude Code**](https://claude.com/claude-code),
 [**OpenAI Codex**](https://openai.com/codex/) or any LLM agent with
