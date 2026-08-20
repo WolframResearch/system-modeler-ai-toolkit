@@ -13,7 +13,7 @@
 
 </div>
 
-https://github.com/user-attachments/assets/603f8f2d-5788-4862-ad21-6f922516453b
+https://github.com/user-attachments/assets/36dd8e4c-43e3-44ef-a11c-6292908003bd
 
 A bundle of skills that let an AI coding assistant—[**Claude Code**](https://claude.com/claude-code),
 [**OpenAI Codex**](https://openai.com/codex/) or any LLM agent with
