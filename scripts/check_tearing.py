@@ -8,7 +8,7 @@ For each torn system, shows:
 - Tearing efficiency — how much tearing reduced the Newton system size
 
 Usage:
-    python check_tearing.py <blockdebug.json> [--section ode|init|both]
+    python check_tearing.py <blockdebug.json> [--section init|ode|output|both|all]
 
 Examples:
     python check_tearing.py Model_blockdebug.json
@@ -40,12 +40,11 @@ def find_torn_systems(obj, results=None, path='', solver=None):
             solver = sib
         # Check for torn partitioning
         if obj.get('partitioning-type') == 'torn':
-            # h = causal equations, g = residual equations
-            h_eqs = obj.get('h', [])
-            g_eqs = obj.get('g', [])
+            # 'h' holds the residual equations (one per iteration variable),
+            # 'g' the equations solved explicitly in between.
             results.append({
-                'h_equations': h_eqs,
-                'g_equations': g_eqs,
+                'residual_equations': obj.get('h', []),
+                'causal_equations': obj.get('g', []),
                 'path': path,
                 'solver': solver or {},
             })
@@ -70,14 +69,17 @@ def main():
         description="Analyze tearing structure in Modelica equation systems"
     )
     parser.add_argument("blockdebug_json", help="Path to _blockdebug.json file")
-    parser.add_argument("--section", choices=["init", "ode", "both"], default="both")
+    parser.add_argument("--section", choices=["init", "ode", "output", "both", "all"],
+                        default="all",
+                        help="both = init and ode; all (default) adds output")
 
     args = parser.parse_args()
     bd.enable_utf8_console()
 
     data = bd.load(args.blockdebug_json)
 
-    sections = ["init", "ode"] if args.section == "both" else [args.section]
+    sections = {"both": ["init", "ode"],
+                "all": ["init", "ode", "output"]}.get(args.section, [args.section])
 
     print("=" * 70)
     print("Tearing Analysis")
@@ -108,8 +110,8 @@ def main():
             found_any = True
 
             for ts in torn_systems:
-                h_eqs = ts['h_equations']
-                g_eqs = ts['g_equations']
+                h_eqs = ts['causal_equations']
+                g_eqs = ts['residual_equations']
 
                 # Solver info captured from the torn system's own tree node
                 solver = ts['solver']
@@ -131,7 +133,9 @@ def main():
                 print(f"    Reduction: {full_size - torn_size} vars solved explicitly ({100*(full_size-torn_size)/max(full_size,1):.0f}% reduction)")
                 print(f"    Jacobian: {jac_label}")
 
-                # Show iteration variables (from g equations)
+                if torn_size and len(sys_vars) >= torn_size:
+                    print(f"    Iteration variables ({torn_size}): "
+                          + ", ".join(sys_vars[:torn_size]))
                 if g_eqs:
                     print(f"    Residual equations ({len(g_eqs)}) — what Newton solves:")
                     for eq in g_eqs:

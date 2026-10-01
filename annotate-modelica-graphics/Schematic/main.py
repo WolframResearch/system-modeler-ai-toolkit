@@ -25,9 +25,10 @@ for _stream in (sys.stdout, sys.stderr):
 from . import colors
 from . import icon as icon_mod
 from . import inject
+from . import references
 from .classify import classify
-from .parser import parse, ParseError
-from mo_edit import dominant_eol, write_atomic  # importable once .parser has run
+from .parser import mask_code, ParseError
+from mo_edit import read_for_edit, write_atomic  # importable once .parser has run
 
 
 def _pos_int(text):
@@ -38,8 +39,29 @@ def _pos_int(text):
     return val
 
 
-def _analyze(text: str) -> int:
-    classes = parse(text)
+def _reference_lines(mask: str, cls, local_refs, splitting: bool) -> list:
+    """One line per reference component with enough connections for a split to matter."""
+    lines = []
+    for inst, uses, blocker in references.split_plan(mask, cls, local_refs):
+        if uses < references.SPLIT_FANOUT_MIN:
+            continue                     # too few connections to change the diagram
+        if not splitting:
+            why = "--no-split-references"
+        else:
+            why = blocker or ""
+        if why:
+            lines.append("reference %s: %d connections — kept shared (%s)"
+                         % (inst.name, uses, why))
+        else:
+            lines.append("reference %s: %d connections — each gets its own instance "
+                         "(--no-split-references keeps it shared)" % (inst.name, uses))
+    return lines
+
+
+def _analyze(text: str, splitting: bool = True) -> int:
+    classes = inject.parse_classes(text)
+    mask = mask_code(text)
+    local_refs = references.local_reference_types(classes)
     print("%-22s %-13s %-26s %-7s %-8s" % ("class", "category", "standard icon", "custom", "diagram"))
     print("-" * 80)
     needs_glyph = []
@@ -57,9 +79,14 @@ def _analyze(text: str) -> int:
         if detail:
             print("    " + " | ".join(detail))
         print("    -> %s" % p.reason)
+        if inject.wants_fresh_diagram(c):
+            for line in _reference_lines(mask, c, local_refs, splitting):
+                print("    %s" % line)
+            for w in inject.diagram_warnings(c):
+                print("    warning: %s" % w)
         if p.wants_custom_icon:
             if c.kind == "connector":
-                domain = colors.name_for(colors.color_for_type(c.name))
+                domain = colors.domain_for_type(c.name)
                 if domain == "unknown":
                     print("    glyph: neutral connector square (domain unrecognized — author a "
                           "symbol from the name/description via --glyphs-file)")
@@ -104,7 +131,7 @@ def _load_glyphs(path: str | None) -> dict:
     return glyphs
 
 
-def _annotate(path: str, text: str, opts: dict, write: bool, eol: str = "\n") -> int:
+def _annotate(path: str, text: str, opts: dict, write: bool, eol: str) -> int:
     new_text, summaries = inject.annotate(text, opts)
     only = opts.get("only_class")
     if only and not summaries:
@@ -113,6 +140,8 @@ def _annotate(path: str, text: str, opts: dict, write: bool, eol: str = "\n") ->
     for s in summaries:
         acts = ", ".join(s["actions"]) or "skip"
         print("  %-22s %s" % (s["name"], acts))
+        for w in s.get("warnings", []):
+            print("      warning: %s" % w)
     if new_text == text:
         print("\nNo changes (already annotated, or nothing to do). Use --force to regenerate.")
         return 0
@@ -142,17 +171,16 @@ def main(argv=None) -> int:
     ap.add_argument("--no-glyphs", action="store_true", help="Use plain rectangles instead of typed glyphs")
     ap.add_argument("--glyphs-file", dest="glyphs_file", default=None,
                     help="JSON of LLM-authored icon glyphs: {ClassName: {graphics:[...], ports:{...}}}")
+    ap.add_argument("--no-split-references", dest="no_split_references", action="store_true",
+                    help="Keep a ground/housing/temperature reference shared by many "
+                         "components as one instance instead of giving each connection its own")
     args = ap.parse_args(argv)
 
     try:
-        # newline="" keeps the raw line endings so the file's own EOL can be restored on write
-        with open(args.file, "r", encoding="utf-8", newline="") as f:
-            raw = f.read()
+        text, eol = read_for_edit(args.file)
     except OSError as e:
         print("ERROR: cannot read %s: %s" % (args.file, e), file=sys.stderr)
         return 2
-    eol = dominant_eol(raw)
-    text = raw.replace("\r\n", "\n").replace("\r", "\n")
 
     try:
         glyphs = _load_glyphs(args.glyphs_file)
@@ -166,15 +194,16 @@ def main(argv=None) -> int:
         "extent": args.extent,
         "no_glyphs": args.no_glyphs,
         "glyphs": glyphs,
+        "split_references": not args.no_split_references,
     }
 
     try:
         if args.analyze and not args.annotate:
-            return _analyze(text)
+            return _analyze(text, opts["split_references"])
         if args.annotate:
             return _annotate(args.file, text, opts, args.write, eol)
         # default: analyze
-        return _analyze(text)
+        return _analyze(text, opts["split_references"])
     except ParseError as e:
         print("ERROR: cannot parse %s: %s" % (args.file, e), file=sys.stderr)
         return 2

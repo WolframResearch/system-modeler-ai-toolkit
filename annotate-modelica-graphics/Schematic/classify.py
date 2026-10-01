@@ -10,7 +10,7 @@ from .parser import ClassSpan
 
 @dataclass
 class Plan:
-    category: str            # package | record | function | type | connector | composite | leaf | thin_extends
+    category: str            # package | record | function | type | connector | composite | leaf | thin_extends | short
     is_example: bool         # runnable example (has experiment annotation)
     standard_icon: str | None    # Modelica.Icons.* base to extend, or None
     wants_diagram: bool      # lay out component instances + route connections
@@ -30,6 +30,8 @@ def classify(cls: ClassSpan) -> Plan:
     is_composite = has_instances or has_connects
     is_example = cls.has_experiment
 
+    if cls.is_short:
+        return Plan("short", False, None, False, False, "short class definition: left as-is")
     # --- Category classes: a standard Icons.* base is the right, idiomatic icon -----
     if kind == "package":
         return Plan("package", False, _std("package", cls), False, False,

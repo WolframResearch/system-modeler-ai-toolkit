@@ -12,6 +12,7 @@ abscissa, so constants/parameters work too).
 
 Usage:
     python mat_summary.py <mat_file> [var1 var2 ...]
+    python mat_summary.py <mat_file> --variables Vout,BP     # same, comma-separated
     python mat_summary.py <mat_file> Vout Q4L.c.v --at 0.09
     python mat_summary.py <mat_file> --list          # just list variable names
     python mat_summary.py <mat_file> --json Vout BP
@@ -72,11 +73,17 @@ def main():
     ap = argparse.ArgumentParser(description="Compact variable summary of a Modelica .mat")
     ap.add_argument("mat_file")
     ap.add_argument("variables", nargs="*", help="Variables to summarize (default: the states)")
+    # wsm_run.py spells this selection as an option (--report), so an option
+    # spelling is accepted here too.
+    ap.add_argument("--variables", "--columns", dest="variables_opt", default=None,
+                    metavar="A,B", help="Comma-separated alternative to the positional names")
     ap.add_argument("--at", type=float, help="Also report the value at this time")
     ap.add_argument("--all", action="store_true", help="Summarize all non-internal variables")
     ap.add_argument("--list", action="store_true", help="List variable names and exit")
     ap.add_argument("--json", action="store_true", help="Emit JSON")
     args = ap.parse_args()
+    if args.variables_opt:
+        args.variables += [v.strip() for v in args.variables_opt.split(",") if v.strip()]
 
     if not os.path.isfile(args.mat_file):
         print("ERROR: .mat not found: %s" % args.mat_file, file=sys.stderr)

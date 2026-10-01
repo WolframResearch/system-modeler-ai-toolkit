@@ -23,6 +23,10 @@ parses the `.mo`, classifies each class, and splices annotations back into the s
   color is automatic; when it isn't, you author the symbol the same way as for components.
 - **Composite models** get an auto-laid-out **Diagram**: each component instance gets a
   `Placement`, and every `connect(…)` gets an orthogonal, domain-colored connection `Line`.
+  A **reference component** shared by several components — one `Ground` that four parts
+  connect to, one `Fixed` housing, one `FixedTemperature` ambient — is first given one
+  instance per connection, so the diagram loses its star of long ground lines and each
+  reference sits beside the component it anchors.
 
 It is **idempotent**: re-running only fills in what is missing (use `--force` to regenerate).
 By default it prints a dry-run diff; nothing is written until you pass `--write`.
@@ -80,6 +84,13 @@ icon, a custom icon, and/or a diagram layout), plus its connectors / instances /
 Present this to the user and confirm the scope. By default all non-trivial classes are
 annotated; restrict with `--class <Name>` if the user wants just one.
 
+A `reference <name>: N connections` line appears for each ground / housing / fixed-temperature
+reference with enough connections to be worth splitting, saying whether it will be split into
+one instance per connection or is kept shared (and why). Mention it when you present the scope
+— it is the one change that touches the model's structure rather than only its graphics.
+A `warning:` line names a component whose pin positions are guessed, or a connection that
+will be drawn as a zero-length stub; mention those too, and check their lines in step 6.
+
 **Read the `glyph:` line under each leaf and connector.** Recognized ones name a built-in glyph
 or a domain color. Unrecognized ones say `domain unrecognized — author …` and are collected in an
 `Unrecognized classes/connectors` list at the end. **Treat that list as a work item: you must
@@ -96,10 +107,15 @@ Shows the unified diff without writing. Summarize what will be added (icons, pla
 connection lines). Useful flags:
 - `--class <Name>` — only that nested class.
 - `--no-glyphs` — plain rounded-rectangle icons instead of typed glyphs.
-- `--extent N` — force the diagram coordinate system to `{{-N,-N},{N,N}}`.
+- `--extent N` — force the diagram coordinate system to `{{-N,-N},{N,N}}`. The canvas is
+  otherwise sized to the layout, growing with the component count, so reach for this only
+  to add margin around a diagram the user finds tight — it moves the frame, not the
+  components, so it cannot separate two that are too close.
 - `--force` — strip **all** graphical annotations (including hand-written ones) and regenerate;
   destructive, so confirm with the user first (see the caution above).
 - `--glyphs-file <json>` — supply your own icon glyphs for named classes (see step 3b).
+- `--no-split-references` — keep a shared ground / housing / ambient as the single instance
+  the user wrote, and rail it along the bottom as before.
 
 ### 3b. Author glyphs for unrecognized classes and connectors (required when the list is non-empty)
 
@@ -162,15 +178,82 @@ Annotations must not change the flatten result. Confirm with the shared launcher
 `validate-modelica` skill's gate). Target a **concrete instantiable model**, not the package:
 
 ```bash
-python3 "<scripts-dir>/wsm_run.py" --mode validate \
+python3 "<scripts-dir>/wsm_run.py" --mode validate --graphics \
   --model "<Model.mo>" --name "<Package>.<ModelName>" --timeout 90
 ```
+
+`--graphics` is what makes this gate cover the annotations you just wrote: without it the
+`Icon`, `Diagram` and `Placement` annotations are not evaluated, so a shape or field name
+that does not resolve passes unnoticed
+([Appendix → Checking graphic annotations](#checking-graphic-annotations)).
 
 Parse `_wsm_validate_temp/validate.out.json` (a JSON array — take the first element; field
 reference: [Appendix → Reading the JSON output](#reading-the-json-output))
 and check `status.flatten == "Pass"`. A Pass confirms the edits didn't corrupt the source. If it
 Fails after annotating but passed before, report it — that's a bug, not the user's model. Then
 remove the temp dir (`rm -rf "<Model-dir>/_wsm_validate_temp"`).
+
+When references were split, each extra reference adds its own connector (two variables) and two
+equations to the flattened model — the same solution, written out more times. If the user wants
+that confirmed rather than argued, simulate once before and once after and compare the
+trajectories (the `simulate-modelica` skill); they must match exactly.
+
+### 6. Look at the diagram (whenever the Wolfram Language is available)
+
+A flatten Pass says nothing about how the diagram looks. If you can evaluate Wolfram
+Language (a Wolfram MCP evaluator, or `wolframscript` on PATH), render each laid-out model with
+System Modeler's own renderer and look at the image before reporting back:
+
+```wolfram
+Import["<abs-path>/Model.mo", "MO"];
+Export["<abs-path>/diagram.png", SystemModel["<Package>.<ModelName>"]["Diagram"], ImageSize -> 700]
+```
+
+Check the image for:
+
+- a line that stops short of a pin, overshoots it, or has a diagonal stub at its end;
+- a line running through a component's body, or lines from different pins piled onto one
+  point;
+- a block drawn sideways or upside down;
+- a line leaving a component backwards, across its own icon;
+- labels overlapping each other or a component.
+
+Fix what you find by editing the offending `Placement` or `Line` by hand (keeping to the
+invariants below), then render again. Remove the image when you are done unless the user
+wants it.
+
+## Placement invariants
+
+If you ever write a `Placement` by hand instead of letting the tool generate it, keep to the
+form below — it is what the tool emits and what Model Center writes back.
+
+```modelica
+annotation(Placement(transformation(extent={{-10,-10},{10,10}}, origin={x,y}, rotation=0)));
+```
+
+- **`origin` carries the position; `extent` stays centred on `{0,0}`.** A transformation
+  applies its attributes in the order `extent`, `rotation`, `origin`: the icon is mapped onto
+  `extent`, rotated **about `{0,0}` — not about the `origin` attribute** — and only then
+  shifted so `{0,0}` lands on `origin`. So a centred extent makes the component rotate about
+  its own centre, and `origin` is the handle the GUI grabs.
+- **Never bake the position into `extent`.** `extent={{x-10,y-10},{x+10,y+10}}` with `origin`
+  left at its `{0,0}` default draws in the right place, but its rotation centre — and the
+  origin marker Model Center shows — sits at the coordinate system origin instead of on the
+  component. Rotating or dragging it then behaves oddly.
+- **Mirror by swapping the extent's corners; there is no flip keyword.**
+  `extent={{10,-10},{-10,10}}` mirrors the icon left to right, `{{-10,10},{10,-10}}` top to
+  bottom, and the mirror is applied before `rotation`. To point a signal block right to
+  left (on a feedback path, say) mirror it rather than `rotation=180`: the mirrored block
+  keeps its name above and its parameter text below, while the rotated one swaps them. A
+  top-to-bottom mirror also swaps them, and turns the glyph over, with the text still upright.
+  Turn only physical two-terminal components (resistors, springs, sources) by 90 or 270
+  degrees, never a block.
+- This rule is specific to `Placement`. Inside `Icon`/`Diagram` `graphics`, a `Line`,
+  `Rectangle` or `Text` *does* rotate about its own `origin` attribute, and its geometry is
+  relative to that origin.
+- **Connection `Line` points are absolute diagram coordinates** (the tool emits no `origin`
+  on them), and each endpoint must land on the connector's pin anchor — the component's
+  `origin` plus the connector's offset on the icon boundary.
 
 ## Notes and edge cases
 
@@ -179,23 +262,60 @@ remove the temp dir (`rm -rf "<Model-dir>/_wsm_validate_temp"`).
 - **Multi-name declarations** (`Pin b, c, e;` or `PNP Q3, Q4;`) are split into one declaration
   per component so each gets its own placement. This is a structural rewrite but semantically
   identical; it flattens to the same model.
-- **Layout is heuristic, not pixel-perfect.** Components are laid out left-to-right by signal
-  flow (feedback loops handled), grounds pinned to the bottom and supplies to the top, with
-  orthogonal connection routing between connector *pins* — each line terminates exactly on the
-  pin anchor (instance origin + the connector's icon-edge offset) and leaves it perpendicular to
-  that edge, so the rendered line is right-angled end to end with no diagonal bridge from the
-  pin; interior waypoints snap to a grid. Pin offsets come from the model's own leaf/sub-circuit icons and a heuristic table for
-  standard-library components (resistors, sources, ground, blocks). Library components render
-  with their own MSL icons; only domain leaves without an MSL equivalent get a custom icon. The
-  user can fine-tune positions afterward in System Modeler.
-- **Two-terminal components are rotated to avoid wrap-around.** A component with two pins on
-  opposite left/right edges (resistor, capacitor, inductor, …) is stood up vertically
-  (pins top/bottom) when both its neighbours sit on the same horizontal side or are separated
-  more vertically than horizontally — so the two connection lines fan out instead of one
-  wrapping around the body. Sources, grounds and supplies keep their orientation.
-  *Known limitation:* a connection to a class connector that is **inherited** (declared in an
-  extended base, not in this class) is emitted as a harmless zero-length stub, since the
-  inherited connector has no diagram placement to anchor to.
+- **A shared reference component is given one instance per connection.** A *reference* fixes
+  the absolute potential of a physical network and has one connector on which it prescribes
+  the **effort** and leaves the **flow** free: `Electrical.Analog.Basic.Ground`,
+  `Mechanics.Rotational`/`Translational.Components.Fixed`,
+  `Thermal.HeatTransfer.Sources.FixedTemperature`, the magnetic `Ground`s, and any `Ground`
+  model defined in the file itself. Because each copy absorbs whatever flow reaches it, N
+  instances behave exactly like one instance shared by N connections — so from three
+  connections up the tool replicates it (`ground`, `ground2`, `ground3`, …) and parks each
+  copy beside the component it anchors. Like the multi-name split this is a structural rewrite
+  with identical behaviour, and re-running is a no-op because nothing is shared any more.
+  Never applied to a **flow-prescribing** source (`FixedHeatFlow`, `ConstantCurrent` — copies
+  would each inject the full amount), to a `Fluid` boundary (also a flow *path* between the
+  connections it joins), or to an `inner` singleton (`MultiBody.world`, `Fluid.System`):
+  these are not references to the tool, so `--analyze` says nothing about them. A reference
+  it *does* recognise is still kept shared when it is declared `inner`/`outer` or as an
+  array, when its name is a quoted identifier, or when an equation reads it (`ground.p.i`) —
+  and there `--analyze` names the reason. `--no-split-references` turns the pre-pass off.
+  The split only runs for a class that is getting a **newly laid-out** diagram, so re-running
+  over a model you already laid out by hand stays the no-op it advertises. It is also the one
+  edit `--force` cannot undo: `--force` strips graphics, not the extra instances.
+- **Layout is heuristic, not pixel-perfect.** Groups of components with no connection
+  between them are laid out as separate bands, one under the other. Within a band:
+  - An electrical network of two-terminal components with a ground is drawn as a ladder:
+    series components along a top wire, the others standing between it and the ground, each
+    ground under the component it grounds.
+  - Anything else flows left to right. Signal direction (output to input) sets the order, a
+    block that only feeds a signal back sits on a return row below the forward path, and each
+    component moves up or down so its pins line up with its neighbours'. Blocks are never
+    rotated; a block on a return row is mirrored. A two-terminal electrical component with a
+    grounded pin stands up with that pin at the bottom.
+  - A reference with a single connection is parked beside the pin it connects to, and one
+    shared by several sits below their pins where there is room, else on a rail along the
+    bottom; supplies rail along the top.
+  - Last, each component is tried mirrored left to right, top to bottom and both, and a flip
+    is kept where it makes that component's lines shorter, with fewer bends or crossings — a
+    sensor that closes a loop turns its output toward the return row, a block with a second
+    input takes it on the side the signal comes from. A top-to-bottom flip has to pay for
+    moving the name below the icon, so it is taken only when it clearly helps. The references
+    are then placed again, beside the pins as they now face.
+
+  Every line ends exactly on its pin, leaves the pin in the direction the pin faces, goes
+  around component bodies and their labels, and crosses or runs close to lines of other nets
+  only where no short detour avoids it. Pin positions come from
+  the model's own classes and, for Modelica Standard Library components, from a table read
+  off the library's source; type names brought in by `import` are resolved first. For any
+  other class (one from another library, say) the pins are guessed from the connector names,
+  and a `warning:` line names the component. The user can fine-tune positions afterward in
+  System Modeler.
+- *Known limitations.* A long chain stays on one row rather than wrapping, and densely
+  cross-coupled circuits (bridges, differential stages) get a readable but untidy layout —
+  step 6 is where you catch and fix those. A connection to a class connector that is
+  **inherited** (declared in an extended base, not in this class) is emitted as a harmless
+  zero-length stub, since the inherited connector has no diagram placement to anchor to,
+  and reported in a `warning:` line.
 - **Idempotency / re-layout.** Default runs never duplicate annotations. To re-generate (e.g.
   after editing the model's connections), pass `--force` — but it discards all existing graphics,
   hand-written included, so confirm with the user first (see the caution near the top).
@@ -213,6 +333,29 @@ remove the temp dir (`rm -rf "<Model-dir>/_wsm_validate_temp"`).
 > reference, environment variables (`WSM_HOME`, `WSM_VSDEVCMD`),
 > install discovery, and the analysis scripts, see
 > [`../scripts/README.md`](../scripts/README.md).*
+
+**These are conventions, not a workflow.** Knowing how to call the tools is not
+the same as knowing which to call, in what order, and how to tell a good answer
+from a plausible one — that lives in the skills, one per job. Invoke the one that
+owns the step you are on, **including when it is not the one you started from**:
+a job that begins in one skill routinely runs into something another one owns,
+and the whole toolkit is available the entire time.
+
+| What you run into | Skill |
+|---|---|
+| About to write or restructure a model or library — including one you decided to build yourself | `modelica-model-architecture` **first** |
+| A `.mo` you just wrote or edited; a structural error | `validate-modelica` |
+| You need results | `simulate-modelica` (`simulate-and-plot-modelica` to plot them too) |
+| A run that must go in real time, take input changes while it runs, or be driven from another program | `simulate-modelica-realtime` |
+| It validates but will not build; it runs far too slowly; it gives an answer you cannot account for; you need its states, equations or blocks | `diagnose-modelica` |
+| The launcher reports a `compiler failure` — an internal error, generated code that does not compile, a simulator internal error or a kernel crash | `minimize-modelica-bug` |
+| A Modelica language or MSL question you would otherwise answer from memory | `search-modelica-docs` |
+| Sweeps, limit checks, calibration, custom result analysis | `wolfram-language-modelica` |
+| No icons, or no diagram layout | `annotate-modelica-graphics` |
+| Plots that should live in the model and reopen with it | `annotate-modelica-plots` |
+| Interactive sliders in Simulation Center's Explore view | `annotate-control-panel` |
+| 3D MultiBody animation | `annotate-modelica-animation` |
+| A hydraulic circuit | `create-hydraulic-model` |
 
 ### Locating the launcher
 
@@ -239,6 +382,52 @@ to run `install.sh` (or `install.ps1`) from the repo, which links `scripts/` too
 Run `wsm_run.py` with `python` (not `python3`); those calls are single-line and
 shell-agnostic. For cleanup use `Remove-Item -Recurse -Force`, not `rm -rf`.
 On macOS/Linux any POSIX shell is fine and `python3` is the usual name.
+
+**For your own analysis, borrow the scripts' interpreter.** Whatever `python3`
+you get is unlikely to have numpy or scipy, and installing into it is both rude
+and often blocked. The analysis scripts run under a managed virtualenv with
+numpy, scipy, matplotlib and DyMat; `python3 <scripts-dir>/bootstrap_env.py`
+makes sure they are installed there and prints its interpreter path. Use that
+interpreter for ad-hoc post-processing rather than discovering package by
+package what the system one lacks.
+
+### Line endings in .mo files
+
+Modelica models are written on Windows, macOS and Linux alike, so a `.mo` file
+may use CRLF or LF. **Neither is the "right" one.** Match whatever the file
+already has, and never leave a file with a mix of both — a mixed file shows up
+as a whole-file diff the moment anything rewrites it, burying the real change.
+
+When you edit a `.mo` yourself with the Write/Edit tools (rather than through one
+of the annotator scripts), those tools write back exactly the text you give them,
+so an edit in the other style silently mixes the file. Check before, and check
+again after:
+
+```bash
+python3 "<scripts-dir>/mo_edit.py" --eol "<Model.mo>"
+```
+
+It prints `LF`, `CRLF`, `MIXED (crlf=N lf=M)` or `NONE`, and exits non-zero on
+`MIXED`. If an edit did change the endings, put them back — this rewrites the
+whole file to one ending, so it also repairs a mixed one:
+
+```bash
+python3 "<scripts-dir>/mo_edit.py" --set-eol auto "<Model.mo>"   # or: lf, or crlf
+```
+
+**A mixed file follows its library, not itself.** If the file you are editing is
+mixed while the rest of the library is consistent, do not settle it on whichever
+ending dominates *inside* that file — the mixing is damage, so the file is not
+evidence about itself, and its majority leaves you with the one odd file out.
+Use the library's ending. `auto` does this for you, and reports which rule it
+applied.
+
+Creating a new `.mo`: same rule — match the sibling `.mo` files in the same
+directory or library (`--eol` accepts several paths at once), so one library does
+not end up half CRLF and half LF. Use LF only when there is nothing to match.
+
+The annotator scripts' `--write` paths already preserve the file's endings and
+warn about a mixed input, so no manual step is needed around those.
 
 ### Let the launcher own .mos/.bat and paths
 
@@ -298,6 +487,18 @@ rm -rf "<model-dir>/_wsm_<mode>_temp"          # macOS / Linux
   a nested model's full dotted name, e.g. `Package.Model`.
 - Pass an **absolute path** to `--model` (relative paths break as the working
   directory shifts between calls).
+- **A class that is already in a loaded library needs no `--model` at all** — give
+  just the full dotted `--name` and the launcher takes it from MSL (or from a
+  `--load-library` library). Use this for MSL examples rather than writing a
+  wrapper model that extends one:
+
+  ```bash
+  python3 "<scripts-dir>/wsm_run.py" --mode diagnose \
+    --name Modelica.Mechanics.MultiBody.Examples.Loops.EngineV6
+  ```
+
+  The temp dir then goes in the current directory. `--model` is still required
+  for a class in the user's own file.
 
 ### Directory-form (multi-file) libraries
 
@@ -334,6 +535,33 @@ take the first element**, then read:
   flattened class / path to the `.mat`.
 
 See [`../scripts/README.md`](../scripts/README.md) (`wsm_run.py` section) for the full field reference.
+
+### Checking graphic annotations
+
+A plain run does not evaluate the graphic annotations: `Icon`, `Diagram` and
+`Placement` are carried along untouched, so an error inside one cannot fail the
+run. Add `--graphics` to have them evaluated together with the model:
+
+```bash
+python3 "<scripts-dir>/wsm_run.py" --mode validate --graphics \
+  --model "<Model.mo>" --name "<Package>.<ModelName>" --timeout 90
+```
+
+Errors then arrive through the usual `status.flatten` and `messages.errors`: a
+variable or component path that does not resolve, a misspelled shape
+(`Rectangel`) or field (`extend`), an array subscript out of bounds. This mode
+needs no C++ compiler, so it is the gate to run after editing annotations.
+
+The compiling modes (`--mode simulate`, `--mode diagnose`) additionally generate
+the model's diagram view, which evaluates the animated (`DynamicSelect`)
+expressions themselves. The launcher prints a `graphics :` line naming the
+generated view; if it was not generated it says so and exits non-zero, meaning an
+animated field could not be evaluated. It also exits non-zero, listing them, when
+an animated value falls back to its static value — typically an expression using a
+function the diagram does not support. Nothing else reports either.
+
+Evaluating the annotations is extra work for the frontend, so pass `--graphics`
+when the annotations are what you changed or are checking, not by default.
 
 ### MSL 4.x dialect
 

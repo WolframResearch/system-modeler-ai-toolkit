@@ -1,6 +1,6 @@
 ---
 name: simulate-modelica
-description: "Simulate Modelica models (.mo files) with WSMKernelX — compiles to C++, builds, and runs the simulation (no plotting; if the user also wants the results plotted, use simulate-and-plot-modelica). Use this skill whenever the user asks to simulate a Modelica model, run a simulation, get simulation results, or wants to see time-domain behavior. Triggers on phrases like 'simulate this model', 'run the simulation', 'get simulation results', or any mention of simulating (without plotting) Modelica code. If the request also involves analysis of the results — checking limits/requirements, violations, parameter sweeps, Monte Carlo, calibration — prefer the wolfram-language-modelica skill when Wolfram Language is available; simulate here and analyze with ad-hoc scripts only when it is not."
+description: "Simulate Modelica models (.mo files) with WSMKernelX — compiles to C++, builds, and runs the simulation (no plotting; to plot the results too, use simulate-and-plot-modelica). Use this skill whenever the user asks to simulate a Modelica model, run a simulation, or get simulation results or time-domain behavior. Triggers on phrases like 'simulate this model', 'run the simulation', 'get simulation results'. Use it also when running a model is a step in a larger job you took on yourself — verifying a port, a datasheet claim or a hand-written implementation against a model built for the purpose — even if the request never mentioned Modelica. If the request also involves analysis — limits/requirements, violations, parameter sweeps, Monte Carlo, calibration — prefer wolfram-language-modelica when Wolfram Language is available."
 ---
 
 # Simulate Modelica Model
@@ -126,7 +126,7 @@ Remove `_wsm_simulate_temp/` entirely — commands per OS: [Appendix → Tempora
 - **Simulation times out or stalls at initialization**: First distinguish *build* from *solve* — check whether the `.exe` was produced (build done) and whether any result rows were written. If it builds but the solver makes no progress:
   1. Re-run with a short `StopTime` (override the model's `experiment` annotation, or use a small wrapper model) to confirm it integrates *at all* before committing to a long run.
   2. If it stalls at/near `t=0`, suspect a **nonlinear algebraic loop with no dynamic states** — common in high-gain feedback (active circuits, control loops) where every variable is algebraic. Run the `diagnose-modelica` skill, then the `check_singularity.py` / `check_tearing.py` scripts (documented in [`../scripts/README.md`](../scripts/README.md)) — they reveal the offending algebraic systems.
-  3. The usual physical fix for active analog circuits is to add the **parasitic dynamic elements** the idealized model omitted (junction/winding capacitances, lead inductances). They turn the stiff algebraic loop into an integrable ODE and bandwidth-limit feedback, which also defines the operating point.
+  3. The usual physical fix, in any domain, is to restore the small **storage element the idealized model dropped** — a device capacitance on an electrical node, a compliant joint for a rigid coupling, a heat capacity on a thermal port, a small volume at a fluid junction. It turns the algebraic loop into an integrable ODE and defines the operating point. The `diagnose-modelica` skill covers where to put it, and the two placements that look right and are not.
   4. As a numerical lever, loosen tolerance or raise `--timeout`, but prefer fixing the model structure — a model that needs a huge timeout for a short horizon is usually telling you something.
 
 ---
@@ -138,6 +138,29 @@ Remove `_wsm_simulate_temp/` entirely — commands per OS: [Appendix → Tempora
 > reference, environment variables (`WSM_HOME`, `WSM_VSDEVCMD`),
 > install discovery, and the analysis scripts, see
 > [`../scripts/README.md`](../scripts/README.md).*
+
+**These are conventions, not a workflow.** Knowing how to call the tools is not
+the same as knowing which to call, in what order, and how to tell a good answer
+from a plausible one — that lives in the skills, one per job. Invoke the one that
+owns the step you are on, **including when it is not the one you started from**:
+a job that begins in one skill routinely runs into something another one owns,
+and the whole toolkit is available the entire time.
+
+| What you run into | Skill |
+|---|---|
+| About to write or restructure a model or library — including one you decided to build yourself | `modelica-model-architecture` **first** |
+| A `.mo` you just wrote or edited; a structural error | `validate-modelica` |
+| You need results | `simulate-modelica` (`simulate-and-plot-modelica` to plot them too) |
+| A run that must go in real time, take input changes while it runs, or be driven from another program | `simulate-modelica-realtime` |
+| It validates but will not build; it runs far too slowly; it gives an answer you cannot account for; you need its states, equations or blocks | `diagnose-modelica` |
+| The launcher reports a `compiler failure` — an internal error, generated code that does not compile, a simulator internal error or a kernel crash | `minimize-modelica-bug` |
+| A Modelica language or MSL question you would otherwise answer from memory | `search-modelica-docs` |
+| Sweeps, limit checks, calibration, custom result analysis | `wolfram-language-modelica` |
+| No icons, or no diagram layout | `annotate-modelica-graphics` |
+| Plots that should live in the model and reopen with it | `annotate-modelica-plots` |
+| Interactive sliders in Simulation Center's Explore view | `annotate-control-panel` |
+| 3D MultiBody animation | `annotate-modelica-animation` |
+| A hydraulic circuit | `create-hydraulic-model` |
 
 ### Locating the launcher
 
@@ -164,6 +187,52 @@ to run `install.sh` (or `install.ps1`) from the repo, which links `scripts/` too
 Run `wsm_run.py` with `python` (not `python3`); those calls are single-line and
 shell-agnostic. For cleanup use `Remove-Item -Recurse -Force`, not `rm -rf`.
 On macOS/Linux any POSIX shell is fine and `python3` is the usual name.
+
+**For your own analysis, borrow the scripts' interpreter.** Whatever `python3`
+you get is unlikely to have numpy or scipy, and installing into it is both rude
+and often blocked. The analysis scripts run under a managed virtualenv with
+numpy, scipy, matplotlib and DyMat; `python3 <scripts-dir>/bootstrap_env.py`
+makes sure they are installed there and prints its interpreter path. Use that
+interpreter for ad-hoc post-processing rather than discovering package by
+package what the system one lacks.
+
+### Line endings in .mo files
+
+Modelica models are written on Windows, macOS and Linux alike, so a `.mo` file
+may use CRLF or LF. **Neither is the "right" one.** Match whatever the file
+already has, and never leave a file with a mix of both — a mixed file shows up
+as a whole-file diff the moment anything rewrites it, burying the real change.
+
+When you edit a `.mo` yourself with the Write/Edit tools (rather than through one
+of the annotator scripts), those tools write back exactly the text you give them,
+so an edit in the other style silently mixes the file. Check before, and check
+again after:
+
+```bash
+python3 "<scripts-dir>/mo_edit.py" --eol "<Model.mo>"
+```
+
+It prints `LF`, `CRLF`, `MIXED (crlf=N lf=M)` or `NONE`, and exits non-zero on
+`MIXED`. If an edit did change the endings, put them back — this rewrites the
+whole file to one ending, so it also repairs a mixed one:
+
+```bash
+python3 "<scripts-dir>/mo_edit.py" --set-eol auto "<Model.mo>"   # or: lf, or crlf
+```
+
+**A mixed file follows its library, not itself.** If the file you are editing is
+mixed while the rest of the library is consistent, do not settle it on whichever
+ending dominates *inside* that file — the mixing is damage, so the file is not
+evidence about itself, and its majority leaves you with the one odd file out.
+Use the library's ending. `auto` does this for you, and reports which rule it
+applied.
+
+Creating a new `.mo`: same rule — match the sibling `.mo` files in the same
+directory or library (`--eol` accepts several paths at once), so one library does
+not end up half CRLF and half LF. Use LF only when there is nothing to match.
+
+The annotator scripts' `--write` paths already preserve the file's endings and
+warn about a mixed input, so no manual step is needed around those.
 
 ### Let the launcher own .mos/.bat and paths
 
@@ -223,6 +292,18 @@ rm -rf "<model-dir>/_wsm_<mode>_temp"          # macOS / Linux
   a nested model's full dotted name, e.g. `Package.Model`.
 - Pass an **absolute path** to `--model` (relative paths break as the working
   directory shifts between calls).
+- **A class that is already in a loaded library needs no `--model` at all** — give
+  just the full dotted `--name` and the launcher takes it from MSL (or from a
+  `--load-library` library). Use this for MSL examples rather than writing a
+  wrapper model that extends one:
+
+  ```bash
+  python3 "<scripts-dir>/wsm_run.py" --mode diagnose \
+    --name Modelica.Mechanics.MultiBody.Examples.Loops.EngineV6
+  ```
+
+  The temp dir then goes in the current directory. `--model` is still required
+  for a class in the user's own file.
 
 ### Directory-form (multi-file) libraries
 
@@ -259,6 +340,33 @@ take the first element**, then read:
   flattened class / path to the `.mat`.
 
 See [`../scripts/README.md`](../scripts/README.md) (`wsm_run.py` section) for the full field reference.
+
+### Checking graphic annotations
+
+A plain run does not evaluate the graphic annotations: `Icon`, `Diagram` and
+`Placement` are carried along untouched, so an error inside one cannot fail the
+run. Add `--graphics` to have them evaluated together with the model:
+
+```bash
+python3 "<scripts-dir>/wsm_run.py" --mode validate --graphics \
+  --model "<Model.mo>" --name "<Package>.<ModelName>" --timeout 90
+```
+
+Errors then arrive through the usual `status.flatten` and `messages.errors`: a
+variable or component path that does not resolve, a misspelled shape
+(`Rectangel`) or field (`extend`), an array subscript out of bounds. This mode
+needs no C++ compiler, so it is the gate to run after editing annotations.
+
+The compiling modes (`--mode simulate`, `--mode diagnose`) additionally generate
+the model's diagram view, which evaluates the animated (`DynamicSelect`)
+expressions themselves. The launcher prints a `graphics :` line naming the
+generated view; if it was not generated it says so and exits non-zero, meaning an
+animated field could not be evaluated. It also exits non-zero, listing them, when
+an animated value falls back to its static value — typically an expression using a
+function the diagram does not support. Nothing else reports either.
+
+Evaluating the annotations is extra work for the frontend, so pass `--graphics`
+when the annotations are what you changed or are checking, not by default.
 
 ### MSL 4.x dialect
 

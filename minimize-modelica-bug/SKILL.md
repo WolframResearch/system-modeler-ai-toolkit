@@ -1,78 +1,213 @@
 ---
-name: validate-modelica
-description: "Validate Modelica models (.mo files) by flattening them with WSMKernelX. Use this skill whenever the user asks to validate, check, test, or verify a Modelica model, or when you've just created or edited a .mo file and want to confirm it compiles. Triggers on phrases like 'validate this model', 'check my .mo file', 'does this Modelica model compile', 'flatten the model', or any mention of checking Modelica code with WSMKernelX. It applies just as much when Modelica is a means to another end and you chose it yourself — modelling a circuit, mechanism or process to check some other implementation against it — and neither Modelica nor System Modeler was ever named in the request."
+name: minimize-modelica-bug
+description: "Reduce a Modelica model that triggers a System Modeler compiler failure (an internal error, generated code that fails to compile, a simulator internal error or a kernel crash) to the smallest model that still fails the same way, and prepare a bug report for Wolfram support. Use this skill whenever the launcher prints a `=== compiler failure ===` block or reports a `compiler_failure`, or the user mentions an 'internal error', 'Fatal failure', 'the compiler crashed', 'generated code failed to compile', 'report this bug to Wolfram', 'make a minimal example' or 'reduce this model for a bug report'. It applies just as much when the failure turns up mid-task in a model you wrote yourself: a compiler failure is a fault in System Modeler, not something to work around silently."
 ---
 
-# Validate Modelica Model
+# Minimize a Modelica Compiler Bug
 
-This skill validates Modelica models (.mo files) by flattening them with WSMKernelX, which checks for structural errors (equations, types, connections). A successful flatten means the model is structurally valid.
+A *compiler failure* is a fault in System Modeler itself rather than in the
+model. Examples are an `Internal error`, generated code that does not compile,
+and a simulator that stops with an internal error. This skill shrinks the
+failing model to the smallest one that still fails with the same message, and
+writes a short report the user can send to Wolfram support. A small
+reproduction gets a bug fixed; a 5,000-line proprietary model usually does not.
+
+Ordinary model errors are not compiler failures: type, lookup and balance errors,
+failed assertions, or a solver giving up. Fix those in the model instead, using
+`validate-modelica` or `diagnose-modelica`.
 
 ## Before you run anything
 
 This skill drives WSMKernelX through the shared launcher
-`../scripts/wsm_run.py`. **Read [the shared-conventions appendix at the end of this file](#appendix-shared-conventions-for-the-modelica-skills)
-first** — launcher resolution, the Windows-vs-Unix shell/Python rules, the
-temp-dir and cleanup conventions, the JSON-array output gotcha, and the MSL 4.x
-dialect notes that every step below assumes.
+`../scripts/wsm_run.py` and the reducer `../scripts/minimize_mo.py`. **Read
+[the shared-conventions appendix at the end of this file](#appendix-shared-conventions-for-the-modelica-skills) first**. It covers launcher
+resolution, the Windows-vs-Unix shell/Python rules, and the temp-dir and
+line-ending conventions that every step below assumes.
 
-The launcher writes everything into `_wsm_validate_temp/` next to the `.mo`
-file and leaves `validate.out.json` there for you to parse. Tell the user:
-"Working in temporary directory `_wsm_validate_temp/`. This will be deleted
-after validation."
+The reducer never touches the user's files. It works on copies in
+`_wsm_minimize_temp/` next to the model. Tell the user: "Working in temporary
+directory `_wsm_minimize_temp/`; your model is not modified."
 
 ## Workflow
 
-### 1. Identify the model file and name
+### 1. Confirm that it is a compiler failure
 
-Identify the `.mo` file and extract the **model name** — see [Appendix → Picking the model name](#picking-the-model-name). For a **directory-form (multi-file) library**, point `--model` at the library folder (not one class file) and pass the full dotted `--name` — see [Appendix → Directory-form (multi-file) libraries](#directory-form-multi-file-libraries).
-
-### 2. Run the launcher
+Identify the model file and name — see
+[Appendix → Picking the model name](#picking-the-model-name)
+and, for a multi-file library,
+[Appendix → Directory-form (multi-file) libraries](#directory-form-multi-file-libraries).
+Then run it once:
 
 ```bash
-python3 "<scripts-dir>/wsm_run.py" --mode validate \
-  --model "<path-to-ModelFile.mo>" --name ModelName --timeout 60
+python3 "<scripts-dir>/wsm_run.py" --mode simulate \
+  --model "<path-to-ModelFile.mo>" --name ModelName --json
 ```
 
-The launcher auto-detects whether the model needs the Modelica Standard
-Library and loads the right MSL version; force it with `--msl yes|no` or pin a
-version with `--msl-version 4.1.0`. If the model uses an installed non-MSL
-library (e.g. `Hydraulic`), add `--load-library <Name>` — see
-[Appendix → Using non-MSL libraries](#using-non-msl-libraries-hydraulic-and-other-installed-libraries).
-Timeout: allow up to 60 seconds — complex models with many components can take a while to flatten.
+- `"compiler_failure"` in the printed JSON is not `null`: this is a compiler failure. Note its `head` (the part of the message that identifies the fault) and the System Modeler `version`.
+- `"compiler_failure"` is `null`: it is not a compiler failure. Tell the user so, show the ordinary error the launcher printed, and help fix the model instead.
 
-A plain run does not evaluate the model's graphic annotations, so an error in an
-`Icon`, `Diagram` or `Placement` passes unnoticed. Add `--graphics` when those
-annotations are what changed, or when the user is asking about the model's
-graphics — see
-[Appendix → Checking graphic annotations](#checking-graphic-annotations).
+A crash — `kind` `crash`, or a `head` reporting a simulator crash or stack
+overflow — can come from the model's own code rather than from System Modeler:
+a function that recurses without end, an external C function that crashes, or
+arrays too large for memory. Rule these out first, for example by checking the
+recursion's end condition or by replacing the external function with a Modelica
+stub on a copy, and treat it as a compiler failure only if it still crashes.
 
-If the launcher can't find the System Modeler install, see
-[Appendix → When the install or compiler isn't found](#when-the-install-or-compiler-isnt-found).
+An `Internal error` about an unknown library is a setup problem, not a bug, and
+is not reported as a compiler failure. The fix is to load the missing library
+(see [Appendix → Using non-MSL libraries](#using-non-msl-libraries-hydraulic-and-other-installed-libraries)).
 
-### 3. Parse the output
+### 2. Run the reducer
 
-WSMKernelX writes structured results to `validate.out.json` in the temp
-directory — a JSON *array*; take the first element. **`status.flatten`**
-(`"Pass"`/`"Fail"`) is the primary result; `flat_model` holds the flattened
-class (useful for debugging). Field reference:
-[Appendix → Reading the JSON output](#reading-the-json-output).
+```bash
+python3 "<scripts-dir>/minimize_mo.py" \
+  --model "<path-to-ModelFile.mo>" --name ModelName
+```
 
-### 4. Report results
+Pass the same `--load-library` / `--load` options the model needs to run.
 
-Summarize clearly:
-- **Pass**: State the model validated successfully. Mention any warnings if present.
-- **Fail**: Show the errors. Include relevant parts of the flattened model if it helps diagnose the issue.
+The reducer finds the earliest stage that shows the failure (`instantiate`, then
+`check`, `build`, `sim`). It then keeps removing comments, annotations, classes,
+statements, modifiers and bindings, and replacing `if`/`when` statements by one
+of their branches, as long as the model still fails with the same `head`. On a
+machine with four or more cores it tries several candidates in parallel (`-j`).
 
-### 5. Clean up
+This takes from a minute to half an hour depending on the model. `--budget`
+sets the limit in seconds and defaults to 30 minutes. Run it in the background
+and tell the user roughly how long to expect. The smallest model found so far is
+always in `_wsm_minimize_temp/best.mo`, so an interrupted run still leaves a
+result.
 
-Remove `_wsm_validate_temp/` entirely — commands per OS: [Appendix → Temporary directories](#temporary-directories).
+It ends by printing a JSON summary containing:
+- `stage`
+- `failure`
+- `reproduced_by_minimal`
+- `original_lines` and `minimal_lines` (non-blank lines)
+- `msl`: whether the minimal model still needs the Modelica Standard Library
+- `kernel_version`
+
+If it exits with status 2, the model showed no compiler failure, and the reducer
+removes the work directory it created. Go back to step 1, and remove its
+`_wsm_simulate_temp/` once you are done with it (see step 7). Status 1 with `"reproduced_by_minimal": false` means the final check of
+`best.mo` did not fail the same way, even though every kept step did: the failure
+is intermittent, or that run timed out (`minimal_failure` is `null`). Check
+`best.mo` as in step 4 before going on. Status 1 without a summary is an error,
+printed above it.
+
+`--strict` requires the whole message to match, not only its `head`. Use it only
+if a first run drifted to a *different* fault that happens to share the head. That
+is visible when `minimal_failure.message` describes a different problem than
+`failure.message`. The same error repeated, or different variable names, is not
+a drift. For generated code that does not compile, the head hides the
+identifiers, so compare the two messages yourself.
+
+### 3. Reduce further by hand
+
+The reducer only deletes, unwraps and replaces references by `0`. Once it
+stops, what's left usually still contains structure only a human-style rewrite
+removes. A typical example is one component feeding another: neither can go
+without the other until the connection is replaced by a literal of the right
+type.
+
+Work on copies of `best.mo` in `_wsm_minimize_temp/manual/`, never on the user's
+model. After each rewrite, check that the failure is still the same by running
+the stage the reducer reported, giving each candidate its own `--tempdir` so
+several can run in parallel:
+
+```bash
+python3 "<scripts-dir>/wsm_run.py" --mode validate --call <stage> \
+  --model "<copy.mo>" --name <Name> --tempdir "<unique-dir>" --json
+```
+
+For `build` or `sim`, use `--mode simulate --call <stage>`. Compare
+`compiler_failure.head` with the original. If it changed or went away, undo the
+rewrite; that tells you the removed part is involved, which is worth noting for
+the report. After a batch of successful rewrites, run `minimize_mo.py` again on
+the copy with `--tempdir _wsm_minimize_temp/round2`, since a rewrite often makes
+more deletions possible.
+
+Rewrites that usually pay off, roughly in this order:
+
+1. **Collapse the hierarchy.** Move the equations and variables of the component that fails into one top-level model. Replace records by plain variables and parameters by literal values. Drop enclosing packages; `--name` then becomes the plain model name.
+2. **Replace library components.** An MSL component still in the model can often be replaced by the two or three equations that matter. Keep the MSL dependency if the failure disappears without it; a report that loads the MSL is fine.
+3. **Simplify expressions.** Replace sub-expressions by `time` or constants, shorten arrays to two elements, drop terms that do not matter.
+4. **Neutral names.** Rename the user's identifiers, descriptions and the model itself (e.g. `MinimalBug`) so the report carries nothing proprietary. Do this last, and check the failure once more afterwards.
+
+Stop when removing any remaining line makes the failure go away, or when further
+gains are marginal. Edits made with Write/Edit must keep the file's line endings
+— see [Appendix → Line endings in .mo files](#line-endings-in-mo-files).
+
+While reducing, keep two lists for the report:
+- variations that **do not** fail, for example "works when the clock is a named variable" or "works with a parameter condition". They are often a workaround the user can apply right away;
+- variations that fail the same way. They show how general the bug is.
+
+A variation that fails with an ordinary model error instead is evidence of
+neither, so leave it out.
+
+### 4. Verify the final model
+
+Run the final model once more in a fresh temp dir with the reducer's stage, and
+check that `compiler_failure.head` still matches the original. If the reducer
+reported `"msl": false`, the final model must also fail with `--msl no`.
+
+### 5. Write the report
+
+Create a folder `<Name>_bug_report/` next to the user's model, where `<Name>` is
+the last part of the user's model name (`Plant` for `Batch.Plant`). It contains:
+
+- `MinimalBug.mo`: the final model.
+- `bug_report.md`, in this form:
+
+```markdown
+# <one-line summary of the failure>
+
+- System Modeler version: <kernel_version>
+- Operating system: <OS and version>
+- Fails when: <checking | translating | simulating> the model `<Name>`
+
+## Steps to reproduce
+Load `MinimalBug.mo` and <check | simulate> `<Name>`.
+
+## Observed
+<the message of the final run's compiler_failure, verbatim, in a code block>
+
+## Expected
+The model <checks | translates | simulates> without an internal error.
+
+## Notes
+- Variations that also fail: <list from step 3>
+- Variations that do not fail: <list from step 3>
+- Reduced from a <original_lines>-line model.
+```
+
+Map the stages to plain words: `instantiate` and `check` mean checking the
+model, `build` means translating it, and `sim` means simulating it.
+
+Keep local paths out of the report. The full kernel output, such as a compiler
+command line, names the user's directories; quote only the error lines.
+Unrelated warnings about the user's model do not belong in the report.
+
+### 6. Hand it to the user
+
+Show the user the minimal model and the report, and suggest sending the folder
+to **support@wolfram.com**. Ask them to review both files first for anything
+confidential. Never send anything yourself. Mention any variation from step 3
+that avoids the failure, since it may unblock them while the bug is fixed. If
+you offer one as a workaround, first check it on a copy of their model in
+`_wsm_minimize_temp/manual/`.
+
+### 7. Clean up
+
+Remove `_wsm_minimize_temp/` and the `_wsm_simulate_temp/` from step 1 once the
+report is written — commands per OS:
+[Appendix → Temporary directories](#temporary-directories).
 
 ## Edge cases
 
-- **Packages / name mismatches**: parse the actual `model`/`package` declaration, not the filename — see [Appendix → Picking the model name](#picking-the-model-name).
-- **`Unknown library: X` on a multi-file library**: you pointed `--model` at a single class file; point it at the library folder instead — see [Appendix → Directory-form (multi-file) libraries](#directory-form-multi-file-libraries).
-- **WSMKernelX not found**: see [Appendix → When the install or compiler isn't found](#when-the-install-or-compiler-isnt-found).
-- **MSL dialect / `Element not found`**: this toolchain ships MSL 4.x — author with the 4.x names; the 3.2 names and misremembered paths flatten with confusing "not found" errors. Look the correct path up with `search-modelica-docs` (don't grep the install tree). See [Appendix → MSL 4.x dialect](#msl-4x-dialect).
+- **The reducer lands on a different message**: the head was too generic. Re-run with `--strict`, and compare the final message with the original in the report.
+- **Every candidate times out**: the failure is a hang, not a message. The reducer cannot follow a hang; reduce by hand instead, treating "does not finish within N seconds" as the failure.
+- **The failure only shows at `sim`**: each candidate is compiled and simulated, so a run takes longer. Give it a larger `--budget`, or bring the model to a smaller size by hand first.
+- **Directory-form library**: point `--model` at the library folder. The reducer packs it into a single file, so the minimal model is one `.mo`.
 
 ---
 

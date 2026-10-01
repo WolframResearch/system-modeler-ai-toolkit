@@ -49,9 +49,9 @@ show up live.
 ./install.sh                 # symlink into ~/.claude/skills
 ./install.sh --copy          # copy instead of symlink
 
-# Windows (PowerShell)
-./install.ps1                # junction into %USERPROFILE%\.claude\skills
-./install.ps1 -Copy
+# Windows (PowerShell; -ExecutionPolicy Bypass lets the unsigned script run)
+powershell -ExecutionPolicy Bypass -File .\install.ps1         # junction into %USERPROFILE%\.claude\skills
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Copy
 ```
 
 Both installers link **all skill directories plus `scripts/`** together (linking
@@ -95,8 +95,8 @@ What you **do** need to check for, by skill:
 
 | Requirement | Needed by | How to get it |
 |---|---|---|
-| **Wolfram System Modeler** | `validate-modelica`, `simulate-*`, `diagnose-modelica`, the `annotate-*` skills (validation gate) | install System Modeler; the launcher auto-discovers it (override with `WSM_HOME` / `--wsm-home`) |
-| **C/C++ compiler** | the *compiling* skills (`simulate-*`, `diagnose-modelica`); also `validate-modelica` for models that use external functions | Windows: VS Build Tools; macOS: `xcode-select --install`; Linux: `gcc`/`g++` |
+| **Wolfram System Modeler** | `validate-modelica`, `simulate-*`, `diagnose-modelica`, `minimize-modelica-bug`, the `annotate-*` skills (validation gate) | install System Modeler; the launcher auto-discovers it (override with `WSM_HOME` / `--wsm-home`) |
+| **C/C++ compiler** | the *compiling* skills (`simulate-*`, `diagnose-modelica`, `minimize-modelica-bug`); also `validate-modelica` for models that use external functions | Windows: VS Build Tools; macOS: `xcode-select --install`; Linux: `gcc`/`g++` |
 | **Wolfram Language** (Mathematica / Wolfram Engine) | `wolfram-language-modelica` (and optional diagram rendering in `annotate-modelica-graphics`) | install Mathematica or the free Wolfram Engine; `wolfram-language-modelica` also needs the [Wolfram MCP server](https://www.wolfram.com/artificial-intelligence/mcp/local/) connected — its SKILL.md's Prerequisites section covers the setup |
 
 `validate-modelica` only flattens, so it **usually** needs no compiler — but some
@@ -132,32 +132,38 @@ If both report sensibly, the install is good. Tell the user and suggest a test
 | [`validate-modelica`](validate-modelica/SKILL.md) | Flatten a `.mo` file with `WSMKernelX` and report structural errors |
 | [`simulate-modelica`](simulate-modelica/SKILL.md) | Compile + run a simulation, report pass/fail and stats |
 | [`simulate-and-plot-modelica`](simulate-and-plot-modelica/SKILL.md) | Simulate, then plot chosen variables with DyMat |
+| [`simulate-modelica-realtime`](simulate-modelica-realtime/SKILL.md) | Run a compiled model as a real-time TCP server: inputs and tunable parameters changed mid-run, streamed values, live plot, raw protocol commands |
 | [`diagnose-modelica`](diagnose-modelica/SKILL.md) | Deep structural/equation/performance report (variables, blocks, tearing, events, runtime) |
+| [`minimize-modelica-bug`](minimize-modelica-bug/SKILL.md) | Reduce a model that triggers a System Modeler internal error to a minimal reproduction and write a bug report for Wolfram support |
 | [`create-hydraulic-model`](create-hydraulic-model/SKILL.md) | Build a hydraulic circuit model, guided by a bundled knowledge graph of the Hydraulic library |
 | [`search-modelica-docs`](search-modelica-docs/SKILL.md) | Offline BM25 search over bundled Modelica + System Modeler docs; returns passages with citation URLs |
 | [`wolfram-language-modelica`](wolfram-language-modelica/SKILL.md) | Drive simulation from Wolfram Language (sweeps, calibration, requirement validation, ML on simulated data) |
 | [`annotate-modelica-graphics`](annotate-modelica-graphics/SKILL.md) | Add Icon + Diagram annotations so a text-only model renders as a schematic |
-| [`annotate-modelica-plots`](annotate-modelica-plots/SKILL.md) | Add standardized result-plot annotations (`Documentation(figures=…)`) so a model stores its own simulation plots |
+| [`annotate-modelica-plots`](annotate-modelica-plots/SKILL.md) | Add standardized result-plot annotations (`Documentation(figures=…)`) so a model stores its own simulation plots, with labelled markers at a time or a level |
 | [`annotate-control-panel`](annotate-control-panel/SKILL.md) | Add control-panel (Explore) annotations so a model opens with interactive sliders, checkboxes and menus in Simulation Center |
 | [`annotate-modelica-animation`](annotate-modelica-animation/SKILL.md) | Add 3D-animation annotations (stored cameras, trace paths, playback settings) so a MultiBody model opens with a ready-made animation |
 
 ### Layout
 
 ```
-agentskills/
+system-modeler-ai-toolkit/
 ├── README.md                       ← short human quick-start
 ├── InstallationGuide.md            ← you are here (agent-facing install steps)
 ├── install.sh / install.ps1        ← link the skills into Claude Code
 ├── scripts/                        ← shared tooling; MUST stay a sibling of the skills
 │   ├── wsm_run.py                  ← cross-platform WSMKernelX launcher
-│   ├── modelica_parser.py          ← shared .mo parser (annotation skills)
+│   ├── modelica_parser.py          ← shared .mo parser (annotation skills, reducer)
+│   ├── minimize_mo.py              ← reduces a model that hits a compiler failure
 │   ├── _env.py / bootstrap_env.py  ← managed-venv self-provisioning
-│   └── … report_blocks / trace_variable / check_* / plot_mat …
+│   ├── wsmsim.py / wsm_realtime.py ← TCP client for running simulations
+│   └── … report_blocks / trace_variable / check_* / plot_mat / mat_features …
 ├── modelica-model-architecture/SKILL.md
 ├── validate-modelica/SKILL.md
 ├── simulate-modelica/SKILL.md
 ├── simulate-and-plot-modelica/SKILL.md
+├── simulate-modelica-realtime/SKILL.md
 ├── diagnose-modelica/SKILL.md
+├── minimize-modelica-bug/SKILL.md
 ├── wolfram-language-modelica/SKILL.md
 ├── create-hydraulic-model/         ← SKILL.md + self-contained GraphRAG (Hydraulic/)
 ├── search-modelica-docs/           ← SKILL.md + self-contained BM25 search (docsearch/)

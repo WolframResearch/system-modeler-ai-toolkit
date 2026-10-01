@@ -1,6 +1,6 @@
 """
 Shared DyMat/numpy helpers for the scripts that read simulation ``.mat`` results
-(``mat_summary.py``, ``op_report.py``, ``check_sanity.py``, ``plot_mat.py``).
+(``mat_summary.py``, ``op_report.py``, ``check_sanity.py``, ``mat_features.py``).
 
 Import this only AFTER the managed-venv bootstrap has run, because it imports
 DyMat and numpy at module load. It centralizes loading, series extraction, the

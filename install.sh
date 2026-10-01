@@ -68,6 +68,19 @@ echo
 # Is $1 a symlink we may replace silently? Yes if it resolves back into this
 # repo (a previous install), or if it is dangling (removing it loses nothing —
 # typically a leftover link after the repo was moved).
+INSTALL_MARKER=".wsm-skills-install"
+
+# A copy-mode install leaves a marker naming the tree it came from, because a
+# copied directory carries no link we could follow. Its presence is what marks
+# the directory as one of ours: a directory the user made themselves has none.
+# The recorded path is reported, not required to match. Prints the recorded
+# path, or nothing.
+install_marker_source() {
+  local m="$1/$INSTALL_MARKER"
+  [ -f "$m" ] || return 1
+  head -n1 "$m" 2>/dev/null | sed 's/[[:space:]]*$//'
+}
+
 owned_by_repo() {
   local link="$1" dest
   [ -L "$link" ] || return 1
@@ -79,6 +92,19 @@ owned_by_repo() {
   return 1
 }
 
+# A copy made by an installer that wrote no marker: a skill directory whose
+# SKILL.md carries this skill's name, or a scripts/ directory with the launcher.
+legacy_copy() {
+  local dir="$1" item="$2"
+  [ -d "$dir" ] && [ ! -L "$dir" ] || return 1
+  if [ "$item" = "scripts" ]; then
+    [ -f "$dir/wsm_run.py" ]
+  else
+    grep -qx "name: $item" "$dir/SKILL.md" 2>/dev/null
+  fi
+}
+
+skipped=0
 tmp=""
 trap '[ -n "$tmp" ] && rm -rf "$tmp" || true' EXIT
 
@@ -92,12 +118,19 @@ for item in "${ITEMS[@]}"; do
   # Replace an existing entry only when it is ours (a symlink back into this
   # repo) — never silently delete something the user put there themselves.
   if [ -e "$dst" ] || [ -L "$dst" ]; then
-    if owned_by_repo "$dst"; then
-      : # our own link from a previous install; replace silently
+    marker_src="$(install_marker_source "$dst" || true)"
+    if owned_by_repo "$dst" || [ -n "$marker_src" ]; then
+      # ours from a previous install; replace it
+      if [ -n "$marker_src" ] && [ "${marker_src%/}" != "${REPO_ROOT%/}" ]; then
+        echo "  note  $item was installed from $marker_src; replacing"
+      fi
+    elif legacy_copy "$dst" "$item"; then
+      echo "  note  $item is a copy from an earlier install; replacing"
     elif [ "$FORCE" -eq 1 ]; then
       echo "  WARNING: replacing $dst (not installed from this repo) because of --force" >&2
     else
       echo "  WARNING: $dst exists and was not installed from this repo; skipping — remove it manually or re-run with --force" >&2
+      skipped=$((skipped + 1))
       continue
     fi
   fi
@@ -112,6 +145,9 @@ for item in "${ITEMS[@]}"; do
       echo "ERROR: failed to copy $item into $TARGET" >&2
       exit 1
     fi
+    # Record where this copy came from, inside the staged directory, so the
+    # marker appears in the same move that publishes the install.
+    [ -d "$tmp" ] && echo "$REPO_ROOT" > "$tmp/$INSTALL_MARKER"
     rm -rf "$dst"
     mv "$tmp" "$dst"
     tmp=""
@@ -124,5 +160,9 @@ for item in "${ITEMS[@]}"; do
 done
 
 echo
+if [ "$skipped" -gt 0 ]; then
+  echo "ERROR: $skipped item(s) were skipped, so the install is incomplete; see the warnings above." >&2
+  exit 1
+fi
 echo "Done. The launcher is reachable from each skill as ../scripts/wsm_run.py"
 echo "Verify with:  python3 \"$TARGET/scripts/wsm_run.py\" --mode info"

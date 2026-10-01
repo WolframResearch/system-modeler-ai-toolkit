@@ -44,7 +44,9 @@ skills write are standard Modelica `.mo` files you can open in any Modelica tool
 | **Architect** | Decide component decomposition, connectors and structure before writing equations |
 | **Create** | Write a Modelica model from a plain-language description |
 | **Validate & simulate** | Check that a model compiles, then run it |
+| **Run live** | Run a model in real time and change its inputs and parameters while it runs, from the command line, a live plot or your own program |
 | **Diagnose** | Explain why a model is slow or failing |
+| **Report compiler bugs** | Shrink a model that triggers a System Modeler internal error to a minimal reproduction, ready to send to Wolfram support |
 | **Plot** | Plot simulation results and store those plots back inside the model |
 | **Search the docs** | Answer from the Modelica Language Specification and the System Modeler documentation, with cited sources (works offline) |
 | **Annotate** | Turn a text-only model into a proper schematic |

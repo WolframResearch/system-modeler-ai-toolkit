@@ -7,7 +7,9 @@ This is the single place where all OS-specific knowledge lives:
   - what the kernel binary is called and where it sits inside the install,
   - which Modelica Standard Library version to load and the paths to its files,
   - how to run the kernel with a working C/C++ compiler on each platform
-    (direct on macOS/Linux; through the Visual Studio dev environment on Windows).
+    (direct on macOS/Linux; through the Visual Studio dev environment on Windows),
+  - which sampling profiler to drive for diagnose --profile (the OS thread API
+    on Windows, /usr/bin/sample on macOS, perf on Linux).
 
 The validate / simulate / diagnose skills call this instead of hand-writing
 .mos scripts and .bat files with hardcoded "C:\\Program Files\\..." paths.
@@ -21,6 +23,7 @@ Usage:
     python wsm_run.py --mode validate  --model path/to/M.mo --name M
     python wsm_run.py --mode simulate  --model path/to/M.mo --name Pkg.M
     python wsm_run.py --mode diagnose  --model path/to/M.mo --name M
+    python wsm_run.py --mode diagnose  --model path/to/M.mo --name M --profile
     python wsm_run.py --mode info        # just print the discovered configuration
     python wsm_run.py --mode libraries   # list installed non-MSL libraries (--library NAME to resolve one)
 
@@ -29,6 +32,10 @@ Common options:
     --msl-version VER       force an MSL version, e.g. 4.1.0 (default: newest 4.x found)
     --load-library NAME     locate an installed non-MSL library by name and load it
                             before the model, repeatable (e.g. Hydraulic; see --mode libraries)
+    --graphics              evaluate and check the graphic annotations (Icon, Diagram,
+                            Placement) instead of carrying them along untouched
+    --figures               also parse the class's Documentation(figures) annotation and
+                            fail on any part System Modeler would ignore
     --tempdir DIR           working dir (default: <model-dir>/_wsm_<mode>_temp)
     --wsm-home PATH         install root override
     --debug                 diagnose: also emit compiler per-stage dumps + exec stats
@@ -36,10 +43,14 @@ Common options:
     --timeout SECONDS       kill the run after this long (default 180)
     --arch ARCH             Windows VS architecture (default amd64; or set $WSM_ARCH)
     --no-run                generate the .mos (and .bat on Windows) but do not run
+    --profile               diagnose: also profile the run, by equation block
+    --seconds N             --profile: sample the run for this long (default 60)
 
 On success the kernel writes "<mode>.out.json" into the temp dir; this script
 prints the path to that file (and, for diagnose, leaves all +g build artifacts
-in place for the report scripts).
+in place for the report scripts). With --profile it builds the same way, then
+runs the executable under the platform's sampler and reports which equation
+blocks the time goes to.
 """
 
 import argparse
@@ -49,10 +60,14 @@ import os
 import platform
 import plistlib
 import re
+import shutil
 import subprocess
 import sys
 import time
 from xml.sax.saxutils import escape as _xml_escape
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import kernel_failure
 
 
 # ----------------------------------------------------------------------------
@@ -232,6 +247,103 @@ def find_vsdevcmd(override=None):
                                        "Common7", "Tools", "VsDevCmd.bat"))
     hits.sort(key=_version_key)
     return hits[-1] if hits else None
+
+
+# ----------------------------------------------------------------------------
+# Sampling profiler discovery (diagnose --profile)
+# ----------------------------------------------------------------------------
+# Each platform samples a running simulation with its own tool, behind one
+# backend module in this folder. This is the only place that knows which.
+
+PROFILE_BACKENDS = {
+    "Windows": ("sampler_win", None),
+    "Darwin": ("sampler_mac", "/usr/bin/sample"),
+    "Linux": ("sampler_linux", "perf"),
+}
+
+
+def find_profiler(override=None):
+    """Resolve the sampling backend for this platform.
+
+    Returns (backend_module_name, tool_path_or_None). Raises RuntimeError with the
+    fix in the message when the platform's tool is missing or the kernel will not
+    allow sampling."""
+    system = platform.system()
+    entry = PROFILE_BACKENDS.get(system)
+    if entry is None:
+        raise RuntimeError(
+            "no sampling profiler is available on %s. Use --mode diagnose with "
+            "report_blocks.py for the equation structure instead." % system)
+    module, default_tool = entry
+    tool = override or os.environ.get("WSM_PROFILER") or default_tool
+    if tool is None:
+        return module, None                      # Windows samples through the OS API
+    if os.path.isabs(tool):
+        resolved = tool if os.path.isfile(tool) else None
+    else:
+        resolved = shutil.which(tool)
+    if not resolved:
+        if system == "Linux":
+            raise RuntimeError(
+                "profiling needs 'perf', which is not on PATH. Install it "
+                "(Debian/Ubuntu: sudo apt install linux-tools-common "
+                "linux-tools-$(uname -r); Fedora: sudo dnf install perf), or point "
+                "$WSM_PROFILER at it.")
+        raise RuntimeError(
+            "profiling needs '%s', which was not found. Point $WSM_PROFILER at it."
+            % tool)
+    if system == "Linux":
+        paranoid = _perf_paranoid()
+        if paranoid is not None and paranoid > 2:
+            raise RuntimeError(
+                "'perf' is installed but kernel.perf_event_paranoid is %d, which "
+                "blocks unprivileged profiling entirely. Lower it for this session "
+                "with: sudo sysctl kernel.perf_event_paranoid=2" % paranoid)
+    return module, resolved
+
+
+def _perf_paranoid():
+    try:
+        with open("/proc/sys/kernel/perf_event_paranoid") as fh:
+            return int(fh.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _profile_only_flags(args):
+    return [("--profiler", args.profiler), ("--seconds", args.seconds),
+            ("--hz", args.hz), ("--top", args.top), ("--stop-time", args.stop_time),
+            ("--profile-result", args.profile_result or None),
+            ("--min-samples", args.min_samples)]
+
+
+def run_profile(tempdir, run_start, seconds, hz, top, profiler, min_samples,
+                stop_time=None, result=False):
+    """Sample the executable this run built and print the profile. Returns an
+    exit code."""
+    exe = _find_built_exe(tempdir, run_start)
+    if not exe:
+        print("ERROR: --profile: the build produced no executable in %s"
+              % tempdir, file=sys.stderr)
+        return 1
+    sim = os.path.splitext(exe)[0] + ".sim"
+    if not os.path.isfile(sim):
+        sim = None
+    module, tool = profiler
+    if tool:
+        os.environ["WSM_PROFILER"] = tool     # the backends resolve it the same way
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    backend = __import__(module)
+    import blockmap
+    import profile_sim
+    stem = os.path.splitext(os.path.basename(exe))[0]
+    if stop_time is not None:
+        sim = profile_sim.retime_sim(sim, stop_time, tempdir)
+    counts, wall, run_info, runs = profile_sim.sample_until(
+        backend, exe, sim, hz, seconds, min_samples, result)
+    profile_sim.report(counts, wall, top, run_info,
+                       blockmap.load(tempdir, stem), runs, result)
+    return 0
 
 
 # ----------------------------------------------------------------------------
@@ -559,11 +671,15 @@ def resolve_model_target(model_arg):
 # by re-running the same call without +g (rerun_without_g).
 FATAL_EXCEPTION_TOKEN = "Fatal error: exception"
 
-MODE_CALL = {"validate": "instantiateModelTest", "simulate": "simTest", "diagnose": "simTest"}
+MODE_CALL = {"validate": "instantiateModelTest", "simulate": "simTest",
+             "diagnose": "simTest"}
+
+BUILD_MODES = ("simulate", "diagnose")
 
 # staged entry points for diagnostics (override the default with --call)
 CALL_ALIAS = {
     "instantiate": "instantiateModelTest",
+    "check": "checkModelTest",
     "build": "buildModelTest",
     "sim": "simTest",
 }
@@ -580,9 +696,32 @@ def _is_model_name(name):
     return bool(name) and _MODEL_NAME_RE.match(name) is not None
 
 
-def build_mos(mode, model_path, name, msl_files, call=None, extra_loads=None):
+def compiles_model(mode, call):
+    """True when the generated .mos compiles the model instead of only flattening it."""
+    return (CALL_ALIAS[call] if call else MODE_CALL[mode]) in ("buildModelTest", "simTest")
+
+
+_IGNORED_ANNOTATION_RE = re.compile(r"^.*\] Warning: Ignoring .*$", re.M)
+
+
+def _dynamic_fallbacks(out_json):
+    """Kernel messages saying a dynamic graphic annotation falls back to its static value."""
+    try:
+        with open(out_json, encoding="utf-8") as fh:
+            messages = (json.load(fh)[0].get("messages") or {})
+    except (OSError, ValueError, TypeError, IndexError, AttributeError):
+        return []
+    return [m.get("message", "") for kind in ("errors", "warnings", "notifications")
+            for m in (messages.get(kind) or [])
+            if isinstance(m, dict) and "dynamic graphic annotation" in m.get("message", "")]
+
+
+def build_mos(mode, model_path, name, msl_files, call=None, extra_loads=None,
+              graphics=False, figures=False):
     lines = []
-    if mode in ("simulate", "diagnose"):
+    if graphics:
+        lines.append("setProcessGraphicAnnotations(true);")
+    if mode in BUILD_MODES:
         lines.append('mce_setOption("allowConditionedSolvability", true);')
     if mode == "diagnose":
         lines.append('mce_setOption("logSelectedStates", true);')
@@ -594,9 +733,12 @@ def build_mos(mode, model_path, name, msl_files, call=None, extra_loads=None):
         lines.append('loadFile("%s");' % _fwd(msl_files["modelica"]))
     for extra in (extra_loads or []):
         lines.append('loadFile("%s");' % _fwd(extra))
-    lines.append('loadFile("%s");' % _fwd(model_path))
+    if model_path:
+        lines.append('loadFile("%s");' % _fwd(model_path))
     test_call = CALL_ALIAS[call] if call else MODE_CALL[mode]
     lines.append("%s(%s);" % (test_call, name))
+    if figures:
+        lines.append("mce_getDocumentationAnnotationFigures(%s);" % name)
     # The *Test calls print/persist their own errors when exception catching is on (not
     # under +g; see kernel-flags note in main()); the opaque-abort case is recovered by
     # rerun_without_g. So no test-harness helpers are emitted here.
@@ -701,8 +843,9 @@ def _fresh(path, since):
         return False
 
 
-def _newest(tempdir, suffix, newer_than=None):
-    hits = [os.path.join(tempdir, f) for f in os.listdir(tempdir) if f.endswith(suffix)]
+def _newest(tempdir, suffix, newer_than=None, exclude=None):
+    hits = [os.path.join(tempdir, f) for f in os.listdir(tempdir)
+            if f.endswith(suffix) and f != exclude]
     if newer_than is not None:
         hits = [p for p in hits if _fresh(p, newer_than)]
     hits.sort(key=lambda p: os.path.getmtime(p))
@@ -842,9 +985,28 @@ def surface_kernel_error(combined_output, tempdir, recover=None):
             break  # the first non-empty source is the most authoritative
     if fatal and not (recovered or json_msgs or hits):
         print("  (no readable error surfaced even after re-running with exception "
-              "catching on -> this is likely a genuine compiler/internal crash; re-run "
-              "with --debug and report it to Wolfram with the model)", file=sys.stderr)
+              "catching on -> this is likely a genuine compiler/internal crash)",
+              file=sys.stderr)
     print("=== end kernel diagnostic ===", file=sys.stderr)
+
+
+def report_compiler_failure(failure):
+    """Tell the reader that this failure is a fault in System Modeler, not in the model."""
+    print("\n=== compiler failure (a fault in System Modeler, not in the model) ===",
+          file=sys.stderr)
+    print("kind     : %s" % failure.kind, file=sys.stderr)
+    print("head     : %s" % failure.head, file=sys.stderr)
+    print("message  : %s" % failure.message.replace("\n", "\n           "), file=sys.stderr)
+    print("The minimize-modelica-bug skill reduces the model to the smallest one that "
+          "still fails this way, ready to send to Wolfram support.", file=sys.stderr)
+    print("=== end compiler failure ===", file=sys.stderr)
+
+
+def _stage_failed(out_json):
+    """True when the out.json test record reports a failed flatten or build stage."""
+    record = kernel_failure.load_test_record(out_json) if out_json else None
+    status = (record or {}).get("status") or {}
+    return "Fail" in (status.get("flatten"), status.get("build"))
 
 
 def rerun_without_g(kernel, args, msl_files, parent_tempdir, kernel_flags,
@@ -864,7 +1026,8 @@ def rerun_without_g(kernel, args, msl_files, parent_tempdir, kernel_flags,
     mos_name = "recover.mos"
     with open(os.path.join(rec_dir, mos_name), "w", encoding="utf-8") as fh:
         fh.write(build_mos(args.mode, args.model, args.name, msl_files,
-                           effective_call, extra_loads=args.extra_loads))
+                           effective_call, extra_loads=args.extra_loads,
+                           graphics=args.graphics))
     flags = [f for f in kernel_flags if f != "+g"]  # the one flag that hides the error
     try:
         proc = run_kernel(kernel, rec_dir, mos_name, flags, args.mode,
@@ -978,7 +1141,7 @@ def run_kernel(kernel, tempdir, mos_name, kernel_flags, mode, timeout, arch,
                vsdevcmd, no_run):
     """Run the kernel in tempdir. On Windows compile modes, go through VsDevCmd."""
     is_windows = platform.system() == "Windows"
-    needs_compiler = mode in ("simulate", "diagnose")
+    needs_compiler = mode in BUILD_MODES
 
     if is_windows and needs_compiler:
         if not vsdevcmd:
@@ -1035,7 +1198,7 @@ def run_with_param_studies(args, kernel, tempdir, msl_files, version):
             return 2
     with open(mos_path, "w", encoding="utf-8") as fh:
         fh.write(build_mos("simulate", args.model, args.name, msl_files,
-                           "build", args.extra_loads))
+                           "build", args.extra_loads, graphics=args.graphics))
     vsdevcmd = find_vsdevcmd(args.vsdevcmd) if platform.system() == "Windows" else None
     run_start = time.time() - _MTIME_SLACK
     try:
@@ -1164,9 +1327,10 @@ def main():
     ap.add_argument("--vsdevcmd", help="Windows: path to VsDevCmd.bat")
     ap.add_argument("--arch", default=os.environ.get("WSM_ARCH", "amd64"),
                     help="Windows VS arch (default amd64; or set $WSM_ARCH)")
-    ap.add_argument("--call", choices=["instantiate", "build", "sim"],
+    ap.add_argument("--call", choices=["instantiate", "check", "build", "sim"],
                     help="Override the test entry point (staged diagnostics): "
-                         "instantiate=instantiateModelTest, build=buildModelTest, sim=simTest")
+                         "instantiate=instantiateModelTest, check=checkModelTest (flatten + "
+                         "symbolic processing, no code generation), build=buildModelTest, sim=simTest")
     ap.add_argument("--load", action="append", default=[], dest="extra_loads",
                     help="Extra .mo file to loadFile before the model, repeatable "
                          "(e.g. a Hydraulic library's package.mo)")
@@ -1182,6 +1346,14 @@ def main():
                          "package path (ready for --load).")
     ap.add_argument("--library-version",
                     help="libraries mode: with --library, force this exact version.")
+    ap.add_argument("--graphics", action="store_true",
+                    help="Evaluate and check the graphic annotations (Icon, Diagram, "
+                         "Placement), which a plain run leaves untouched. The compiling "
+                         "modes also generate the diagram view, which checks the "
+                         "DynamicSelect expressions")
+    ap.add_argument("--figures", action="store_true",
+                    help="Also parse the class's Documentation(figures) annotation (the "
+                         "stored plots) and fail on any part System Modeler would ignore")
     ap.add_argument("--kernel-arg", action="append", default=[],
                     help="Advanced/raw kernel flag, repeatable. Most diagnostics are "
                          "handled for you; prefer --debug over hand-passing flags here.")
@@ -1205,6 +1377,33 @@ def main():
     ap.add_argument("--no-sim", action="store_true",
                     help="diagnose mode: build only (buildModelTest + keep artifacts), skip the "
                          "simulation. Much faster when you only need the structural report.")
+    ap.add_argument("--profile", action="store_true",
+                    help="diagnose mode: after building, run the model under the "
+                         "host's sampling profiler and report which equation blocks "
+                         "the time goes to. Builds only (like --no-sim), because the "
+                         "profiled run replaces the kernel's own.")
+    ap.add_argument("--profiler",
+                    help="--profile: path to the sampling tool to use, overriding "
+                         "the platform default (or set $WSM_PROFILER).")
+    ap.add_argument("--seconds", type=float,
+                    help="--profile: how long to sample before stopping the run "
+                         "(default 60)")
+    ap.add_argument("--hz", type=int,
+                    help="--profile: requested sample rate (default 500)")
+    ap.add_argument("--top", type=int,
+                    help="--profile: equation blocks to list (default 20)")
+    ap.add_argument("--stop-time", type=float, metavar="T",
+                    help="--profile: sample the run out to this simulation time "
+                         "instead of the model's own stop time (no rebuild). Use "
+                         "it when the model finishes too fast to sample.")
+    ap.add_argument("--profile-result", action="store_true",
+                    help="--profile: write a result file during the profiled run "
+                         "so its cost is included. Off by default -- the "
+                         "trajectory is the same either way.")
+    ap.add_argument("--min-samples", type=int, metavar="N",
+                    help="--profile: re-run the model until this many samples "
+                         "have accumulated, or --seconds runs out (default 2000). "
+                         "A fast model needs more runs, not a longer one.")
     ap.add_argument("--timeout", type=int, default=180)
     ap.add_argument("--no-run", action="store_true",
                     help="Generate the .mos (and .bat on Windows) without running")
@@ -1242,6 +1441,11 @@ def main():
         }
         if platform.system() == "Windows":
             info["vsdevcmd"] = find_vsdevcmd(args.vsdevcmd)
+        try:
+            _module, _tool = find_profiler(args.profiler)
+            info["profiler"] = _tool or "built into the OS API"
+        except RuntimeError as e:
+            info["profiler"] = "unavailable: %s" % e
         libs = discover_libraries(root)
         info["installed_libraries"] = ["%s %s" % (l["name"], l["version"]) if l["version"]
                                        else l["name"] for l in libs]
@@ -1255,6 +1459,7 @@ def main():
             print("MSL version   : %s" % info["msl_version"])
             if "vsdevcmd" in info:
                 print("VsDevCmd.bat  : %s" % info["vsdevcmd"])
+            print("Profiler      : %s" % info["profiler"])
             libnames = info["installed_libraries"]
             print("Libraries     : %s" % (", ".join(libnames) if libnames
                                           else "(none besides MSL; see --mode libraries)"))
@@ -1299,8 +1504,8 @@ def main():
         return 0
 
     # --- validate required args ---
-    if not args.model or not args.name:
-        print("ERROR: --model and --name are required for mode '%s'" % args.mode,
+    if not args.name:
+        print("ERROR: --name is required for mode '%s'" % args.mode,
               file=sys.stderr)
         return 2
     if not _is_model_name(args.name):
@@ -1308,22 +1513,37 @@ def main():
               "only); it is interpolated into the generated .mos script." % args.name,
               file=sys.stderr)
         return 2
-    target = resolve_model_target(args.model)
-    if target is None:
-        if os.path.isdir(args.model):
-            print("ERROR: model directory has no package.mo (not a directory-form "
-                  "library): %s" % args.model, file=sys.stderr)
-        else:
-            print("ERROR: model file not found: %s" % args.model, file=sys.stderr)
-        return 2
-    model_load, scan_paths, temp_base, model_kind = target
-    if model_kind == "package" and os.path.abspath(model_load) != os.path.abspath(args.model):
-        print("NOTE: '%s' is part of a directory-form library; loading the whole "
-              "package via %s. Use the full dotted --name (e.g. Package.Model)."
-              % (args.model, model_load), file=sys.stderr)
-    # Every downstream consumer (build_mos here, in run_with_param_studies, and in
-    # the +g recovery re-run) loads args.model, so point it at the resolved target.
-    args.model = model_load
+
+    # A class that already lives in MSL or in a --load-library library needs no
+    # file of its own: with no --model, the run works in the current directory and
+    # loads only the libraries.
+    if not args.model:
+        if "." not in args.name:
+            print("ERROR: --model is required unless --name is a class inside a "
+                  "loaded library (e.g. Modelica.Blocks.Examples.PID_Controller)",
+                  file=sys.stderr)
+            return 2
+        model_load, scan_paths, temp_base, model_kind = None, [], os.getcwd(), "library"
+        print("NOTE: no --model given; taking '%s' from the loaded libraries."
+              % args.name, file=sys.stderr)
+    else:
+        target = resolve_model_target(args.model)
+        if target is None:
+            if os.path.isdir(args.model):
+                print("ERROR: model directory has no package.mo (not a directory-form "
+                      "library): %s" % args.model, file=sys.stderr)
+            else:
+                print("ERROR: model file not found: %s" % args.model, file=sys.stderr)
+            return 2
+        model_load, scan_paths, temp_base, model_kind = target
+        if model_kind == "package" and os.path.abspath(model_load) != os.path.abspath(args.model):
+            print("NOTE: '%s' is part of a directory-form library; loading the whole "
+                  "package via %s. Use the full dotted --name (e.g. Package.Model)."
+                  % (args.model, model_load), file=sys.stderr)
+        # Every downstream consumer (build_mos here, in run_with_param_studies, and
+        # in the +g recovery re-run) loads args.model, so point it at the resolved
+        # target.
+        args.model = model_load
 
     # --- resolve --load-library into concrete package paths (loaded before the model) ---
     if args.load_libraries:
@@ -1348,8 +1568,12 @@ def main():
         args.extra_loads = resolved + args.extra_loads
 
     # --- MSL decision ---
+    # With no model file there is nothing to scan, and the class itself comes from
+    # a library -- so auto means yes.
     want_msl = (args.msl == "yes" or
-                (args.msl == "auto" and any(model_uses_msl(p) for p in scan_paths)))
+                (args.msl == "auto" and (model_kind == "library"
+                                         or any(model_uses_msl(p)
+                                                for p in scan_paths))))
     msl_files = None
     if want_msl:
         try:
@@ -1363,6 +1587,24 @@ def main():
                   % os.path.join(root, "L"), file=sys.stderr)
             return 2
         warn_msl_dialect(scan_paths, msl_files.get("version"))
+
+    # --- profiler (resolved before the build, so an unsupported host fails fast) ---
+    profiler = None
+    stray = [flag for flag, value in _profile_only_flags(args) if value is not None]
+    if stray and not args.profile:
+        print("ERROR: %s only applies with --mode diagnose --profile"
+              % ", ".join(stray), file=sys.stderr)
+        return 2
+    if args.profile:
+        if args.mode != "diagnose":
+            print("ERROR: --profile is only valid with --mode diagnose",
+                  file=sys.stderr)
+            return 2
+        try:
+            profiler = find_profiler(args.profiler)
+        except RuntimeError as e:
+            print("ERROR: %s" % e, file=sys.stderr)
+            return 2
 
     # --- temp dir ---
     model_dir = os.path.abspath(temp_base)
@@ -1385,13 +1627,15 @@ def main():
         if not os.path.isfile(extra):
             print("ERROR: --load file not found: %s" % extra, file=sys.stderr)
             return 2
-    # diagnose --no-sim: build (keep +g artifacts) but don't simulate.
+    # diagnose --no-sim / --profile: build (keep +g artifacts) but don't let the
+    # kernel simulate -- with --profile the sampled run does that instead.
     effective_call = args.call
-    if args.no_sim and args.mode == "diagnose" and not args.call:
+    if (args.no_sim or args.profile) and args.mode == "diagnose" and not args.call:
         effective_call = "build"
     with open(mos_path, "w", encoding="utf-8") as fh:
         fh.write(build_mos(args.mode, model_load, args.name, msl_files,
-                           effective_call, args.extra_loads))
+                           effective_call, args.extra_loads, graphics=args.graphics,
+                           figures=args.figures))
 
     # --- kernel flags (diagnose only; callers never hand-write these) ---
     # +g keeps the build artifacts under predictable names
@@ -1450,6 +1694,11 @@ def main():
         print("Generated %s (not run; --no-run)." % mos_path)
         return 0
 
+    # The diagram view is written only by a compiling run with --graphics; its absence
+    # then means a graphic annotation could not be evaluated.
+    graphics_checked = args.graphics and compiles_model(args.mode, effective_call)
+    graphics_view = _newest(tempdir, "_graphics.html", run_start) if graphics_checked else None
+
     summary = {
         "tempdir": tempdir,
         "mos": mos_path,
@@ -1459,9 +1708,26 @@ def main():
         "msl_version": msl_files["version"] if msl_files else None,
         "returncode": proc.returncode,
     }
+    if graphics_checked:
+        summary["graphics_view"] = graphics_view
+
+    combined = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    figure_problems = _IGNORED_ANNOTATION_RE.findall(combined) if args.figures else []
+    if args.figures:
+        summary["figure_problems"] = figure_problems
+    dynamic_fallbacks = _dynamic_fallbacks(summary["out_json"]) if graphics_checked else []
+    if graphics_checked:
+        summary["graphics_fallbacks"] = dynamic_fallbacks
+    failure = kernel_failure.classify_run(summary["out_json"], combined, proc.returncode)
+    run_failed = (proc.returncode != 0 or summary["out_json"] is None
+                  or FATAL_EXCEPTION_TOKEN in combined
+                  or _SIM_ERROR_RE.search(combined) is not None
+                  or _stage_failed(summary["out_json"])
+                  or failure is not None)
+    summary["failed"] = run_failed
 
     if args.json:
-        print(json.dumps(summary, indent=2))
+        pass  # printed once the failure analysis below is complete
     elif args.quiet:
         print(quiet_outcome(out_json, proc, tempdir, run_start))
     else:
@@ -1474,14 +1740,15 @@ def main():
         print("temp dir : %s" % tempdir)
         print("out.json : %s" % (summary["out_json"] or "(not produced)"))
         print("kernel   : %s (v%s, MSL %s)" % (kernel, version, summary["msl_version"]))
+        if graphics_checked:
+            print("graphics : %s" % (graphics_view or "diagram view NOT generated"))
+        if args.figures:
+            print("figures  : %s" % ("%d problem(s)" % len(figure_problems)
+                                     if figure_problems else "ok"))
 
     # On a failed run, dig the real diagnostic out of the kernel output and print it
     # at the tail (where `tail -N run.log` will catch it), so an opaque
     # uncaught-exception abort is not mistaken for an unknowable crash.
-    combined = (proc.stdout or "") + "\n" + (proc.stderr or "")
-    run_failed = (proc.returncode != 0 or summary["out_json"] is None
-                  or FATAL_EXCEPTION_TOKEN in combined
-                  or _SIM_ERROR_RE.search(combined) is not None)
     if run_failed and not args.no_run:
         sys.stdout.flush()
         # +g is the only flag that disables exception catching, so the re-run-without-+g
@@ -1493,6 +1760,16 @@ def main():
                 kernel, args, msl_files, tempdir, kernel_flags, effective_call,
                 args.arch, vsdevcmd)
         surface_kernel_error(combined, tempdir, recover=recover)
+        if failure is None and recover is not None:
+            recovered_json = os.path.join(tempdir, "_recover_no_g", "recover.out.json")
+            if _fresh(recovered_json, run_start):
+                failure = kernel_failure.classify_run(recovered_json)
+        if failure is not None:
+            report_compiler_failure(failure)
+
+    summary["compiler_failure"] = failure.to_dict() if failure else None
+    if args.json:
+        print(json.dumps(summary, indent=2))
 
     # optional compact result summary (only for a successful run, and only from a
     # .mat this run actually wrote -- never a leftover from a previous run)
@@ -1511,8 +1788,34 @@ def main():
             run_mat_summary(mat,
                             [v.strip() for v in args.report.split(",") if v.strip()])
 
+    if graphics_checked and not graphics_view and not run_failed:
+        print("ERROR: --graphics: the model built, but the diagram view was not "
+              "generated, so at least one graphic annotation could not be evaluated; "
+              "the kernel output above names it. Everything else about the model is "
+              "fine.", file=sys.stderr)
+        return 1
+    if dynamic_fallbacks and not run_failed:
+        print("ERROR: --graphics: these animated values stay at their static value:",
+              file=sys.stderr)
+        for m in dynamic_fallbacks:
+            print("  " + m, file=sys.stderr)
+        return 1
+    if figure_problems and not run_failed:
+        print("ERROR: --figures: System Modeler ignores these parts of the stored plots:",
+              file=sys.stderr)
+        for m in figure_problems:
+            print("  " + m, file=sys.stderr)
+        return 1
+
     if run_failed and proc.returncode == 0:
         return 1  # kernel exited 0 but the run demonstrably failed
+    if args.profile and not run_failed:
+        sys.stdout.flush()
+        return run_profile(tempdir, run_start,
+                           60.0 if args.seconds is None else args.seconds,
+                           args.hz or 500, args.top or 20, profiler,
+                           2000 if args.min_samples is None else args.min_samples,
+                           args.stop_time, args.profile_result)
     return proc.returncode
 
 

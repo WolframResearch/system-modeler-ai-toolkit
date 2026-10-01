@@ -244,6 +244,8 @@ class ClassSpan:
     kind: str                  # model | package | class | block | record | connector | function | type
     name: str
     is_partial: bool = False
+    is_short: bool = False     # short class definition: `package P = Q;`, `model M = N(...);`
+    short_base: str = ""       # the class a short definition names, e.g. ``Q``
     header_start: int = 0      # index of the class keyword
     body_start: int = 0        # index just after header (+ description), where body begins
     body_end: int = 0          # index of the matching 'end Name;' keyword
@@ -264,6 +266,8 @@ class ClassSpan:
     has_figures: bool = False        # Documentation(...) already carries a figures = {...}
     annotation_start: int = 0   # span of the class-level annotation(...) statement, or (0,0)
     annotation_end: int = 0
+    placements: dict = field(default_factory=dict)  # declared name -> masked declaration with a Placement
+    imports: list = field(default_factory=list)  # (name, path): ``import A.B.*`` gives ("", "A.B")
 
 
 # ---------------------------------------------------------------------------
@@ -289,11 +293,26 @@ def _next_significant(mask: str, pos: int) -> str:
     return mask[pos] if pos < n else ""
 
 
+def _paren_depths(mask: str) -> list:
+    """Parenthesis nesting depth at every offset of ``mask``."""
+    out, d = [], 0
+    for ch in mask:
+        if ch == "(":
+            d += 1
+        elif ch == ")":
+            d = max(0, d - 1)
+        out.append(d)
+    return out
+
+
 def find_classes(text: str, mask: str) -> list:
     """Return a flat list of ClassSpan with parent/children links, in source order."""
     # Collect open-header and end events on the mask.
     events = []  # (pos, kind, payload)
+    depth = _paren_depths(mask)
     for m in _HEADER_RE.finditer(mask):
+        if depth[m.start(1)]:
+            continue        # `redeclare package Medium = ...` inside a modification
         kw = m.group(1)
         name = m.group(2).strip("'")
         name_end = m.end(2)
@@ -321,7 +340,7 @@ def find_classes(text: str, mask: str) -> list:
             body_start, description = _scan_description(text, mask, p["name_end"])
             cs = ClassSpan(
                 kind=p["kind"], name=p["name"], is_partial=p["is_partial"],
-                header_start=p["header_start"], body_start=body_start,
+                is_short=p["short"], header_start=p["header_start"], body_start=body_start,
                 description=description,
             )
             idx = len(classes)
@@ -332,6 +351,8 @@ def find_classes(text: str, mask: str) -> list:
             if p["short"]:
                 # short class: terminate at the next top-level ';'
                 semi = _find_semicolon(mask, p["name_end"])
+                base = re.match(r"\s*=\s*(?:input\s+|output\s+)?([\w.]+)", mask[p["name_end"]:semi])
+                cs.short_base = base.group(1) if base else ""
                 cs.body_end = semi
                 cs.full_end = semi + 1
             else:
@@ -550,6 +571,13 @@ def populate_class(cls: ClassSpan, text: str, mask: str, classes: list,
     """
     sibling_names = {classes[c].name for c in cls.children}
     component_names = sibling_names | (known_components or set())
+    # a declaration of a type defined elsewhere (imported, or a sibling in another file)
+    # is a component when a connect reaches into it
+    reached = {g.split(".")[0].split("[")[0] for a, b in _own_intervals(cls, classes)
+               for m in _CONNECT_RE.finditer(mask, a, b) for g in m.groups() if "." in g}
+
+    def connected(names):
+        return any(nm in reached for nm in names)
     for (a, b) in _own_intervals(cls, classes):
         for (s, e) in _split_statements(mask, a, b):
             mstmt = mask[s:e]
@@ -581,8 +609,8 @@ def populate_class(cls: ClassSpan, text: str, mask: str, classes: list,
                     cls.extends.append(em.group(1))
                 continue
 
-            # import
-            if core.startswith("import"):
+            if re.match(r"import\b", core):
+                cls.imports += _imports(core)
                 continue
 
             # class-level annotation
@@ -616,6 +644,9 @@ def populate_class(cls: ClassSpan, text: str, mask: str, classes: list,
 
             had_param = bool(re.match(r"\s*(?:parameter|constant)\b", _strip_section(mstmt)))
             has_placement = bool(re.search(r"\bPlacement\s*\(", mstmt))
+            if has_placement:
+                for nm in names:
+                    cls.placements[nm] = cm2
             description = _trailing_description(cm2, co2)
 
             if is_connector_type(type_name, known_connectors):
@@ -628,7 +659,7 @@ def populate_class(cls: ClassSpan, text: str, mask: str, classes: list,
                     ))
             elif had_param or is_value_type(type_name):
                 continue  # parameter / variable
-            elif ("." in type_name) or (type_name in component_names):
+            elif ("." in type_name) or (type_name in component_names) or connected(names):
                 mods = _capture_mods(cm2, co2)
                 for nm, sp in zip(names, decl_spans):
                     cls.instances.append(Instance(
@@ -638,6 +669,40 @@ def populate_class(cls: ClassSpan, text: str, mask: str, classes: list,
                         siblings=list(names), decl_text=co2[sp[0]:sp[1]],
                     ))
             # else: local simple-type variable -> skip
+
+
+def _imports(core: str) -> list:
+    """``(name, path)`` pairs of one import clause; ``name`` is "" for a wildcard."""
+    m = re.match(r"import\s+(\w+)\s*=\s*([\w.]+)", core)
+    if m:
+        return [(m.group(1), m.group(2))]
+    m = re.match(r"import\s+([\w.]+)\.\s*\*", core)
+    if m:
+        return [("", m.group(1))]
+    m = re.match(r"import\s+([\w.]+)\.\s*\{([^}]*)\}", core)
+    if m:
+        return [(n.strip(), m.group(1) + "." + n.strip()) for n in m.group(2).split(",") if n.strip()]
+    m = re.match(r"import\s+([\w.]+)", core)
+    return [(m.group(1).split(".")[-1], m.group(1))] if m else []
+
+
+def import_candidates(cls: ClassSpan, classes: list, type_name: str) -> list:
+    """Full paths a type name may denote through the imports in scope, most specific first.
+
+    A named import is certain; each wildcard gives a candidate the caller has to confirm.
+    Empty when no import applies.
+    """
+    head, _, rest = type_name.partition(".")
+    named, wild = [], []
+    c = cls
+    while c is not None:
+        for name, path in c.imports:
+            if name == head:
+                named.append(path + ("." + rest if rest else ""))
+            elif not name:
+                wild.append(path + "." + type_name)
+        c = classes[c.parent] if c.parent != -1 else None
+    return named + wild
 
 
 def _trailing_description(cm2: str, co2: str) -> str:
@@ -701,3 +766,149 @@ def parse_file(path: str) -> tuple:
     with open(path, "r", encoding="utf-8") as f:
         text = f.read()
     return text, parse(text)
+
+
+# ---------------------------------------------------------------------------
+# Statement structure (for tools that remove or rewrite whole statements)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Statement:
+    """One element, equation or algorithm statement of a class body.
+
+    ``kind`` is ``section`` (``equation``, ``algorithm``, ``initial equation``,
+    ``public``, ...), ``plain`` (anything ending at its own ``;``) or ``block``
+    (an ``if``/``for``/``when``/``while`` statement up to its ``end ...;``).
+    ``start``/``end`` span the statement in the source (``end`` is past the
+    ``;``). A block's ``branches`` are ``(keyword_start, body_start, body_end,
+    statements)``, one per ``then``/``elseif``/``else``/``elsewhen``/``loop`` body,
+    where ``keyword_start`` is where the ``if``/``elseif``/``else``/... begins."""
+    kind: str
+    start: int
+    end: int
+    keyword: str = ""
+    branches: list = field(default_factory=list)
+
+    def walk(self):
+        yield self
+        for _, _, _, stmts in self.branches:
+            for s in stmts:
+                yield from s.walk()
+
+
+_SECTION_RE = re.compile(r"(?:initial\s+)?(?:equation|algorithm)\b|(?:public|protected)\b")
+_BLOCK_RE = re.compile(r"(if|for|when|while)\b")
+_BLOCK_STOPS = {"if": ("elseif", "else", "end"), "when": ("elsewhen", "end"),
+                "for": ("end",), "while": ("end",)}
+_BLOCK_OPENER = {"if": "then", "elseif": "then", "when": "then", "elsewhen": "then",
+                 "for": "loop", "while": "loop", "else": None}
+
+
+def _skip_ws(mask: str, pos: int, end: int) -> int:
+    while pos < end and mask[pos].isspace():
+        pos += 1
+    return pos
+
+
+def _find_word(mask: str, word: str, pos: int, end: int) -> int:
+    """Index of the next depth-0 ``word`` in ``mask[pos:end]``, or -1."""
+    depth = 0
+    pat = re.compile(r"(?<!\w)" + word + r"\b")
+    for i in range(pos, end):
+        c = mask[i]
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth = max(0, depth - 1)
+        elif depth == 0 and pat.match(mask, i):
+            return i
+    return -1
+
+
+def _parse_statements(mask: str, pos: int, end: int, stops=()) -> tuple:
+    """Statements from ``pos`` until ``end`` or a statement starting with one of
+    ``stops``. Returns ``(statements, stop_pos, stop_word)``."""
+    stmts = []
+    while True:
+        pos = _skip_ws(mask, pos, end)
+        if pos >= end:
+            return stmts, end, None
+        for word in stops:
+            if re.match(word + r"\b", mask[pos:pos + len(word) + 1]):
+                return stmts, pos, word
+        sec = _SECTION_RE.match(mask, pos)
+        if sec:
+            stmts.append(Statement("section", pos, sec.end(), re.sub(r"\s+", " ", sec.group(0))))
+            pos = sec.end()
+            continue
+        blk = _BLOCK_RE.match(mask, pos)
+        if blk:
+            stmt = _parse_block(mask, pos, end, blk.group(1))
+            stmts.append(stmt)
+            pos = stmt.end
+            continue
+        semi = _find_semicolon(mask, pos)
+        if semi >= end or mask[semi] != ";":
+            return stmts, end, None
+        word = re.match(r"[A-Za-z_]\w*", mask[pos:])
+        stmts.append(Statement("plain", pos, semi + 1, word.group(0) if word else ""))
+        pos = semi + 1
+
+
+def _parse_block(mask: str, start: int, end: int, keyword: str) -> Statement:
+    stmt = Statement("block", start, end, keyword)
+    word, pos = keyword, start
+    while True:
+        opener = _BLOCK_OPENER[word]
+        if opener is None:
+            body = pos + len(word)
+        else:
+            at = _find_word(mask, opener, pos + len(word), end)
+            if at < 0:
+                raise ParseError("no '%s' for '%s' at offset %d" % (opener, word, pos))
+            body = at + len(opener)
+        stmts, stop, word = _parse_statements(mask, body, end, _BLOCK_STOPS[keyword])
+        if word is None:
+            raise ParseError("unterminated '%s' at offset %d" % (keyword, start))
+        stmt.branches.append((pos, body, stop, stmts))
+        if word == "end":
+            closing = re.compile(r"end\s+" + keyword + r"\s*;").match(mask, stop)
+            if not closing:
+                raise ParseError("expected 'end %s;' at offset %d" % (keyword, stop))
+            stmt.end = closing.end()
+            return stmt
+        pos = stop
+
+
+def class_statements(cls: ClassSpan, mask: str, classes: list) -> list:
+    """The statements in ``cls``'s own body (nested classes excluded), in source order."""
+    out = []
+    for a, b in _own_intervals(cls, classes):
+        stmts, _, _ = _parse_statements(mask, a, b)
+        out.extend(stmts)
+    return out
+
+
+def comment_spans(text: str, mask: str) -> list:
+    """``(start, end)`` of every comment in ``text``."""
+    spans = []
+    in_string = False
+    i, n = 0, len(text)
+    while i < n:
+        if mask[i] == '"':
+            in_string = not in_string
+        elif not in_string and mask[i] == " " and text.startswith("//", i):
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            spans.append((i, j))
+            i = j
+            continue
+        elif not in_string and mask[i] == " " and text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            spans.append((i, j))
+            i = j
+            continue
+        i += 1
+    return spans
+

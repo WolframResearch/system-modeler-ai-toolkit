@@ -1,6 +1,6 @@
 ---
 name: diagnose-modelica
-description: "Diagnose Modelica models (.mo files) by generating a detailed structural and simulation report. Use this skill whenever the user asks to diagnose, analyze, profile, or debug a Modelica model's structure, equations, variables, or performance. Triggers on phrases like 'diagnose this model', 'analyze the model structure', 'show me the equation blocks', 'how many states does this model have', 'why is this model slow', 'debug this model', 'model report', or any request to understand the internals of a Modelica model."
+description: "Diagnose Modelica models (.mo files) by generating a detailed structural and simulation report. Use this skill whenever the user asks to diagnose, analyze, profile, or debug a Modelica model's structure, equations, variables, or performance. Triggers on phrases like 'diagnose this model', 'analyze the model structure', 'show me the equation blocks', 'how many states does this model have', 'why is this model slow', 'debug this model', 'model report', or any request to understand the internals of a Modelica model. It applies equally when you reach for it mid-task — a model you wrote yourself validates but will not build, simulates far too slowly, or gives an answer you cannot account for."
 ---
 
 # Diagnose Modelica Model
@@ -86,11 +86,12 @@ the failure is at init/simulation (a model error), not code-gen; a truncated `_b
 After a successful run, use the bundled `report_blocks.py` script to generate a complete report. This is the preferred approach — it parses all the artifacts automatically, so you never need to read them by hand:
 
 ```bash
-python3 "<scripts-dir>/report_blocks.py" \
-  "<temp-dir>/ModelName_blockdebug.json" \
-  --header "<temp-dir>/ModelName_header.h" \
-  --reslog "<temp-dir>/ModelName_res.log"
+python3 "<scripts-dir>/report_blocks.py" --tempdir "<temp-dir>"
 ```
+
+(`--tempdir` finds the newest build's `_blockdebug.json`, `_header.h` and
+`_res.log` for you; name the three paths individually only to report on an older
+build in a reused temp dir.)
 
 The script produces a full report covering variable counts, block summaries, non-trivial systems with solvability details, eliminated aliases, and runtime performance.
 
@@ -173,12 +174,215 @@ Present the report to the user in this format:
 
 Tailor the "Potential Issues" section based on what `report_blocks.py` reports:
 - Nonlinear blocks → "Nonlinear system of N equations — may cause convergence issues at initialization or during simulation"
-- Large algebraic loops → "Algebraic loop with N equations — consider breaking with `Modelica.Blocks.Math.InverseBlockConstraints` or adding initial guesses"
+- Large algebraic loops → "Algebraic loop with N equations, torn to M". The fix is
+  to give one of its variables a state by restoring an idealised-away storage
+  element (see step 5, *Breaking a large coupled block*); better `start` values on
+  the iteration variables help convergence but not the block's size
 - Many zero crossings → "N zero crossings — may cause slow simulation due to frequent event detection"
 - No states → "No continuous states — this is a purely algebraic/discrete model"
 - Many events at runtime → "N events detected — consider smoothing discontinuities"
+- A long integration time with no structural culprit → profile it (step 5); the
+  structure says what the solver has to do, not which part is expensive
 
-### 5. Trace a specific variable (optional)
+### 5. Profile where the time goes (optional)
+
+The structural report says what the solver has to solve; it does not say what is
+slow. When the user asks why a model takes so long — or when step 4 shows a long
+integration time that the block structure alone does not explain — profile the
+run:
+
+```bash
+python3 "<scripts-dir>/wsm_run.py" --mode diagnose --profile --model "<path-to-ModelFile.mo>" --name ModelName --seconds 60
+```
+
+This builds the model the same way step 2 does, then runs it under the host's
+sampling profiler — the launcher picks the right one for Windows, macOS or
+Linux. `--load-library <Name>`, `--load <path-to-package.mo>` and the other
+build options work exactly as in step 2. To profile again without rebuilding, run
+`profile_sim.py --tempdir "<temp-dir>"` instead — it re-runs and re-samples the
+model, skipping only the build.
+
+**A model has to run long enough to sample.** The profiler collects a few hundred
+samples per second of simulation, so it re-runs the model until it has enough
+(the header says how many runs it took). The sampler needs up to about a second
+to attach, so a run shorter than that can end before sampling starts, and
+repeating will not help — give `--stop-time <T>` so that one run takes a few
+seconds:
+
+```bash
+python3 "<scripts-dir>/wsm_run.py" --mode diagnose --profile \
+  --name Modelica.Mechanics.MultiBody.Examples.Loops.Fourbar2 --stop-time 10000
+```
+
+That needs no rebuild and does not touch the model's own settings. Say so when
+you report the numbers: the run keeps the model's number of output points, so a
+longer run spreads them more thinly and the output-section share drops, while the
+per-block shares of the integration stay meaningful.
+
+**The profiled run writes no result file.** The trajectory is identical — the
+model still evaluates its output section at every output point — but the cost of
+writing the file is left out, and a long run does not leave a large `.mat`
+behind. Add `--profile-result` when you specifically want writing counted.
+
+**A dense output interval is its own performance problem, and the profile hides
+it.** Every output point forces the ODE blocks to be evaluated again, so the cost
+lands on those blocks and the shares look unremarkable while the run is several
+times longer than it needs to be. Read the interval out of the model's
+`experiment` annotation (or the `.sim`'s `outputSteps` over its `start`–`end`)
+against the run's own time scale, and check it before reading anything else into the profile: a model asking
+for thousands of output points over its stop time is usually carrying a default
+nobody chose. To measure what a coarser one would save, edit `outputSteps` in a copy
+of the temp dir's `.sim` and re-run the built executable with `-f <copy>` — no
+rebuild.
+
+**The profile alone is not the answer.** A block index means nothing to the
+user; the job is to carry it back to their model and say what to change. Work
+through it in three passes.
+
+**Pass 1 — read the profile.** Every sample is charged to the block it was taken
+in, so each row is one block, what it solves, which classes its equations came
+from, and how its cost divides:
+
+```
+  44.87 %  ode block 366 -- 366 equations, torn to 30 iteration variables, analytic-linear Jacobian
+           solves cylinder1, cylinder2, cylinder3, cylinder4, +4 more
+           from Utilities.Cylinder, Parts.Body, Parts.FixedTranslation, +2 more
+           cost generated equation bodies 71% | Jacobian linear algebra 22% | nonlinear solver 2%
+```
+
+The **by model component** roll-up that follows names the instances. Six equal
+shares across `cylinder1..6` means the cost lives in the shared class, not in one
+instance — fix the class once. A final **by kind of work** table gives the same
+cost split for the whole run, which is the one number to quote when the user asks
+where the time goes overall.
+
+**Pass 2 — open the hot blocks against the model.** For each of the top two or
+three blocks, get the classes and lines its equations were flattened from:
+
+```bash
+python3 "<scripts-dir>/report_blocks.py" --tempdir "<temp-dir>" --block ode:366
+```
+
+It prints the equation count and torn size, every source class with the lines it
+contributed, the variables solved per component, and the equations themselves.
+Read the named lines in the user's own `.mo` files. When they land in a library
+class (`Modelica.*`), the lever is not that class — it is how the model uses it:
+which component was chosen, how many of them there are, and how they are
+connected.
+
+A row reading `N blocks evaluated together (a-b)` is time the sampler could not
+place on one block of that range; `--block` opens the blocks in it one at a time.
+
+**Pass 3 — turn that into changes.** The cost split says which kind of fix
+applies:
+
+| What the profile shows | What it means | What to suggest |
+|---|---|---|
+| big block, many iteration variables, cost mostly **generated equation bodies** | one large coupled system, expensive to evaluate once | shrink the system — usually by giving one of its variables a state (see below), or by picking a simpler component variant or cutting duplicated structure |
+| cost mostly **nonlinear solver**, small torn size | the solver iterates a lot per step | better `start` values on the iteration variables (`check_tearing.py` names them and the residuals Newton solves), `homotopy` when it is initialization that struggles, and remove discontinuities feeding the block |
+| Jacobian reported as **numeric** | the solver finite-differences it — one extra residual evaluation per iteration variable | find what the compiler could not differentiate in that block (external functions, non-smooth tables, `noDerivative`) and make it differentiable |
+| cost mostly **Jacobian linear algebra** | dense factorisation of a large torn system each step | the lever is the torn size, not the arithmetic — same fix as the first row; `check_tearing.py` (below) shows what is torn |
+| cost mostly **transcendental math** or a **medium:** category | expensive correlations re-evaluated every step | simplify or cache the correlation, or use a cheaper medium/property model |
+| high **integrator and event handling**, many events in step 4 | the solver is restarting on discontinuities | smooth the discontinuity (`smooth`, `noEvent`, a regularised law) |
+| the hot blocks are in the **init** section | initialisation dominates | only matters for short runs or repeated restarts; give better initial guesses |
+| the hot blocks are in the **output** section | writing results dominates | store fewer variables, or increase the output interval |
+
+#### Breaking a large coupled block: restore the storage the model idealised away
+
+This is the highest-value fix in the table and the one to reach for whenever a
+single block dominates, so it is worth doing deliberately rather than by
+instinct. A block is large because none of the variables in it is a state: they
+are all unknowns of one simultaneous system, so the solver tears it and runs
+Newton on every step. Give **one** of those variables a state and the system
+falls apart into smaller ones.
+
+The variable to pick is almost always a **connector variable of a component that
+was idealised** — a source whose output is an algebraic function of its inputs, a
+rigid coupling, a perfect contact. Real hardware has a small storage element
+there (capacitance, compliance, inertia, volume) that the ideal model dropped.
+Putting it back is physical, not a numerical trick.
+
+**Find the variable.** `check_tearing.py` names each torn system's iteration
+variables and the residual equations Newton solves (`--section ode` or
+`output` narrows it to the section of the profiled block):
+
+```bash
+python3 "<scripts-dir>/check_tearing.py" "<temp-dir>/ModelName_blockdebug.json" --section ode
+```
+
+`report_blocks.py --block <section>:<index>` names the classes and lines the
+block's equations came from. A connector variable of the user's own component in
+that list is the candidate.
+
+**Then add the element that gives it a state**, matching the domain:
+
+| Domain | Storage on the **potential** (across) | Storage on the **flow** (through) |
+|---|---|---|
+| Electrical | capacitance from the node to ground → node voltage | series inductance → branch current |
+| Thermal | heat capacitor on the port → port temperature | (no dual in the MSL thermal domain) |
+| Fluid / hydraulic | a small volume at the junction → junction pressure | fluid inertia in a line → mass flow rate |
+| Translational | spring-damper replacing a rigid connection → relative position | a mass → velocity |
+| Rotational | torsional spring-damper replacing a rigid shaft → relative angle | an inertia → angular velocity |
+| Signal blocks | a first-order lag in the algebraic feedback path → the lag output | — |
+
+Use the **potential** column when the loop solves for voltages, temperatures,
+pressures or positions — the common case, and what an idealised *source* leaves
+behind. Use the **flow** column when two ideal potential sources or rigid
+velocity constraints meet and the unknown is the current, flow rate or force
+between them. Adding it inside the component's own equations (a
+`C*der(pin.v)` term) and adding the library component do the same thing
+structurally; the term keeps the parasitic with the component it belongs to.
+
+**Two placements look right and are not:**
+
+- **One element away from the connector.** A pole *behind* a series output
+  resistance bandwidth-limits the component but leaves the connector variable
+  algebraically tied to the load, so the block survives. The storage has to be on
+  the variable the block is solving for.
+- **On a node a real storage element already ties to another state.** A second
+  capacitance on a node that already has one, a capacitance straight across an
+  ideal voltage source, an inertia rigidly coupled to another one: the new
+  variable is fixed by an existing state or source, so it does not become a state
+  of its own and the block does not shrink. Pick another node in the block.
+
+**Sizing and checking.** Make the added time constant short against the fastest
+behaviour the model is meant to show, and no shorter — an unnecessarily tiny one
+just makes the model stiff. Then, every time:
+
+- Re-run step 2, and check that `NX` in `report_blocks.py --summary` rose by one
+  per added element (the `selected as states` notification in
+  `diagnose.out.json` lists the states). If it did not, or a notification there
+  reports `Differentiated equation for index reduction` on the new equation, the
+  second placement above applies — move it.
+- In the same summary, the largest block should shrink. The number of coupled
+  systems usually goes *up*, since one large system becomes several small ones;
+  if the largest block did not shrink, the state did not land inside it.
+- **Check the trajectory, not only the clock.** A parasitic big enough to change
+  the answer is a modelling change, and has to be reported to the user as one.
+- Re-time the run. Honest reporting means the before and after come from the same
+  stop time and the same tolerance.
+
+**A tolerance that suddenly costs 100x is a symptom of this, not a setting to
+tune.** If tightening the tolerance one decade turns a fast run into one that
+does not finish, the model has a block like this and the fix is structural.
+
+Report to the user, in this order: which components and model classes the time is
+in, why (the block's structure and cost split), and a ranked list of concrete
+changes with what each would save. Name model classes and line numbers — never
+`chunkFunction_74` or the runtime functions underneath it, which the user cannot
+change. Be honest about size: say when a suggestion is a modelling trade-off
+(a compliant joint changes the physics) rather than a free win.
+
+The profile is only as good as its sample count — the header prints the samples
+collected and the effective rate, so profile a case that is genuinely slow and
+treat a small count as thin evidence.
+
+If the host has no usable sampling tool the launcher says so before building,
+and the message names the fix; `wsm_run.py --mode info` prints which profiler it
+resolved. When one cannot be made available, the structural reports of steps 3-4
+remain the way in.
+
+### 6. Trace a specific variable (optional)
 
 If the user asks to trace a variable (e.g. "trace clutch1.w_rel", "what equations solve w_rel"), use the bundled `trace_variable.py` script to walk the full dependency chain.
 
@@ -200,7 +404,7 @@ The script automatically:
 - If the variable isn't found in the ODE section, automatically tries `der(variable)` (since state variables are integrated, their derivatives are what appears in the ODE blocks)
 - Reports eliminated variable aliases
 
-### 6. Clean up
+### 7. Clean up
 
 Remove `_wsm_diagnose_temp/` entirely — commands per OS: [Appendix → Temporary directories](#temporary-directories).
 
@@ -209,7 +413,7 @@ Remove `_wsm_diagnose_temp/` entirely — commands per OS: [Appendix → Tempora
 - **Model fails to flatten**: Report errors from `diagnose.out.json`. Analyze the error messages and suggest fixes (missing components, type mismatches, unbalanced equations).
 - **Model flattens but fails to build**: Still run `report_blocks.py` on `_blockdebug.json` if it was generated — it's produced before compilation. Report build errors from `ModelName.log`.
 - **Model builds but fails to simulate**: Report runtime errors from `_res.log`. Check for division by zero, assertion failures, or solver convergence issues.
-- **`Fatal error: exception ...(_)`** (no `_blockdebug.json` or `.sim`): a normal error `+g` let escape, **not** a compiler bug. Read the launcher's `=== actual kernel diagnostic ===` block (it auto-recovers the message by re-running the same call without `+g`). Only if it surfaces nothing readable, use the staged diagnostics above; report to Wolfram only when the failure lands in a compiler stage with no model-level cause.
+- **`Fatal error: exception ...(_)`** (no `_blockdebug.json` or `.sim`): a normal error `+g` let escape, **not** a compiler bug. Read the launcher's `=== actual kernel diagnostic ===` block (it auto-recovers the message by re-running the same call without `+g`). Only if it surfaces nothing readable, use the staged diagnostics above. When the launcher prints a `=== compiler failure ===` block, the fault is in System Modeler: hand over to `minimize-modelica-bug`.
 - **Multiple models in one file**: Use the top-level model/package name — see [Appendix → Picking the model name](#picking-the-model-name).
 - **WSMKernelX or compiler not found**: see [Appendix → When the install or compiler isn't found](#when-the-install-or-compiler-isnt-found).
 
@@ -222,6 +426,29 @@ Remove `_wsm_diagnose_temp/` entirely — commands per OS: [Appendix → Tempora
 > reference, environment variables (`WSM_HOME`, `WSM_VSDEVCMD`),
 > install discovery, and the analysis scripts, see
 > [`../scripts/README.md`](../scripts/README.md).*
+
+**These are conventions, not a workflow.** Knowing how to call the tools is not
+the same as knowing which to call, in what order, and how to tell a good answer
+from a plausible one — that lives in the skills, one per job. Invoke the one that
+owns the step you are on, **including when it is not the one you started from**:
+a job that begins in one skill routinely runs into something another one owns,
+and the whole toolkit is available the entire time.
+
+| What you run into | Skill |
+|---|---|
+| About to write or restructure a model or library — including one you decided to build yourself | `modelica-model-architecture` **first** |
+| A `.mo` you just wrote or edited; a structural error | `validate-modelica` |
+| You need results | `simulate-modelica` (`simulate-and-plot-modelica` to plot them too) |
+| A run that must go in real time, take input changes while it runs, or be driven from another program | `simulate-modelica-realtime` |
+| It validates but will not build; it runs far too slowly; it gives an answer you cannot account for; you need its states, equations or blocks | `diagnose-modelica` |
+| The launcher reports a `compiler failure` — an internal error, generated code that does not compile, a simulator internal error or a kernel crash | `minimize-modelica-bug` |
+| A Modelica language or MSL question you would otherwise answer from memory | `search-modelica-docs` |
+| Sweeps, limit checks, calibration, custom result analysis | `wolfram-language-modelica` |
+| No icons, or no diagram layout | `annotate-modelica-graphics` |
+| Plots that should live in the model and reopen with it | `annotate-modelica-plots` |
+| Interactive sliders in Simulation Center's Explore view | `annotate-control-panel` |
+| 3D MultiBody animation | `annotate-modelica-animation` |
+| A hydraulic circuit | `create-hydraulic-model` |
 
 ### Locating the launcher
 
@@ -248,6 +475,52 @@ to run `install.sh` (or `install.ps1`) from the repo, which links `scripts/` too
 Run `wsm_run.py` with `python` (not `python3`); those calls are single-line and
 shell-agnostic. For cleanup use `Remove-Item -Recurse -Force`, not `rm -rf`.
 On macOS/Linux any POSIX shell is fine and `python3` is the usual name.
+
+**For your own analysis, borrow the scripts' interpreter.** Whatever `python3`
+you get is unlikely to have numpy or scipy, and installing into it is both rude
+and often blocked. The analysis scripts run under a managed virtualenv with
+numpy, scipy, matplotlib and DyMat; `python3 <scripts-dir>/bootstrap_env.py`
+makes sure they are installed there and prints its interpreter path. Use that
+interpreter for ad-hoc post-processing rather than discovering package by
+package what the system one lacks.
+
+### Line endings in .mo files
+
+Modelica models are written on Windows, macOS and Linux alike, so a `.mo` file
+may use CRLF or LF. **Neither is the "right" one.** Match whatever the file
+already has, and never leave a file with a mix of both — a mixed file shows up
+as a whole-file diff the moment anything rewrites it, burying the real change.
+
+When you edit a `.mo` yourself with the Write/Edit tools (rather than through one
+of the annotator scripts), those tools write back exactly the text you give them,
+so an edit in the other style silently mixes the file. Check before, and check
+again after:
+
+```bash
+python3 "<scripts-dir>/mo_edit.py" --eol "<Model.mo>"
+```
+
+It prints `LF`, `CRLF`, `MIXED (crlf=N lf=M)` or `NONE`, and exits non-zero on
+`MIXED`. If an edit did change the endings, put them back — this rewrites the
+whole file to one ending, so it also repairs a mixed one:
+
+```bash
+python3 "<scripts-dir>/mo_edit.py" --set-eol auto "<Model.mo>"   # or: lf, or crlf
+```
+
+**A mixed file follows its library, not itself.** If the file you are editing is
+mixed while the rest of the library is consistent, do not settle it on whichever
+ending dominates *inside* that file — the mixing is damage, so the file is not
+evidence about itself, and its majority leaves you with the one odd file out.
+Use the library's ending. `auto` does this for you, and reports which rule it
+applied.
+
+Creating a new `.mo`: same rule — match the sibling `.mo` files in the same
+directory or library (`--eol` accepts several paths at once), so one library does
+not end up half CRLF and half LF. Use LF only when there is nothing to match.
+
+The annotator scripts' `--write` paths already preserve the file's endings and
+warn about a mixed input, so no manual step is needed around those.
 
 ### Let the launcher own .mos/.bat and paths
 
@@ -307,6 +580,18 @@ rm -rf "<model-dir>/_wsm_<mode>_temp"          # macOS / Linux
   a nested model's full dotted name, e.g. `Package.Model`.
 - Pass an **absolute path** to `--model` (relative paths break as the working
   directory shifts between calls).
+- **A class that is already in a loaded library needs no `--model` at all** — give
+  just the full dotted `--name` and the launcher takes it from MSL (or from a
+  `--load-library` library). Use this for MSL examples rather than writing a
+  wrapper model that extends one:
+
+  ```bash
+  python3 "<scripts-dir>/wsm_run.py" --mode diagnose \
+    --name Modelica.Mechanics.MultiBody.Examples.Loops.EngineV6
+  ```
+
+  The temp dir then goes in the current directory. `--model` is still required
+  for a class in the user's own file.
 
 ### Directory-form (multi-file) libraries
 
@@ -343,6 +628,33 @@ take the first element**, then read:
   flattened class / path to the `.mat`.
 
 See [`../scripts/README.md`](../scripts/README.md) (`wsm_run.py` section) for the full field reference.
+
+### Checking graphic annotations
+
+A plain run does not evaluate the graphic annotations: `Icon`, `Diagram` and
+`Placement` are carried along untouched, so an error inside one cannot fail the
+run. Add `--graphics` to have them evaluated together with the model:
+
+```bash
+python3 "<scripts-dir>/wsm_run.py" --mode validate --graphics \
+  --model "<Model.mo>" --name "<Package>.<ModelName>" --timeout 90
+```
+
+Errors then arrive through the usual `status.flatten` and `messages.errors`: a
+variable or component path that does not resolve, a misspelled shape
+(`Rectangel`) or field (`extend`), an array subscript out of bounds. This mode
+needs no C++ compiler, so it is the gate to run after editing annotations.
+
+The compiling modes (`--mode simulate`, `--mode diagnose`) additionally generate
+the model's diagram view, which evaluates the animated (`DynamicSelect`)
+expressions themselves. The launcher prints a `graphics :` line naming the
+generated view; if it was not generated it says so and exits non-zero, meaning an
+animated field could not be evaluated. It also exits non-zero, listing them, when
+an animated value falls back to its static value — typically an expression using a
+function the diagram does not support. Nothing else reports either.
+
+Evaluating the annotations is extra work for the frontend, so pass `--graphics`
+when the annotations are what you changed or are checking, not by default.
 
 ### MSL 4.x dialect
 

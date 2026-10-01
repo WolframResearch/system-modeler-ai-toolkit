@@ -1,6 +1,6 @@
 ---
 name: wolfram-language-modelica
-description: "Simulate and analyze Modelica models from within Wolfram Language / a notebook (WSM SystemModel* functions, WSMRealTimeSimulate) — extract numerical results and make custom plots. Use this skill whenever the user wants to work with a Modelica model inside WL / a notebook — running parameter sweeps, pulling time series into Wolfram arrays for analysis (e.g. AnomalyDetection, Predict, Classify, SystemModelCalibrate), validating against requirements (SystemModelValidate, Monte Carlo, uncertainty bands), training surrogates, making custom plots, or driving a live simulation interactively (pause/resume, change inputs or parameters mid-run, agent/LLM-in-the-loop). Triggers on phrases like 'simulate this model in WL', 'get the results into Wolfram Language', 'extract a time series', 'SystemModelSimulate', 'SystemModelPlot', 'sweep a parameter', 'validate against requirements', 'stays within limits', 'show me any violations', 'SystemModelValidate', 'failure plot', 'uncertainty plot', 'train a surrogate', 'real-time simulation', 'interactive simulation', 'change inputs while it runs', 'WSMRealTimeSimulate'."
+description: "Simulate and analyze Modelica models from Wolfram Language / a notebook (WSM SystemModel* functions, WSMRealTimeSimulate) — extract numerical results and make custom plots. Use this skill whenever the user wants to work with a Modelica model inside WL — parameter sweeps, time series in Wolfram arrays (AnomalyDetection, Predict, SystemModelCalibrate), validating against requirements (SystemModelValidate, Monte Carlo, uncertainty bands), training surrogates, custom plots, or driving a live simulation from a notebook. Triggers on phrases like 'simulate this model in WL', 'get the results into Wolfram Language', 'SystemModelSimulate', 'SystemModelPlot', 'sweep a parameter', 'validate against requirements', 'stays within limits', 'show me any violations', 'uncertainty plot', 'train a surrogate', 'real-time simulation in a notebook', 'WSMRealTimeSimulate'. To run a compiled simulator in real time from a script or program, use simulate-modelica-realtime."
 ---
 
 # System Modeling with Wolfram Language
@@ -20,6 +20,7 @@ For pure command-line simulation / validation with no WL work afterward, prefer 
 | `SystemModelCalibrate`, `SystemModelParametricSimulate` | **this skill** |
 | Requirement validation, uncertainty bands, surrogates | **this skill** |
 | Live simulation you can pause / poke inputs & parameters mid-run | **this skill** (`WSMRealTimeSimulate`) |
+| The same without Wolfram Language: from Python, a script or another program over TCP | `simulate-modelica-realtime` |
 
 ## Official reference docs (LLM-friendly variant)
 

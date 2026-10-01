@@ -1,78 +1,180 @@
 ---
-name: validate-modelica
-description: "Validate Modelica models (.mo files) by flattening them with WSMKernelX. Use this skill whenever the user asks to validate, check, test, or verify a Modelica model, or when you've just created or edited a .mo file and want to confirm it compiles. Triggers on phrases like 'validate this model', 'check my .mo file', 'does this Modelica model compile', 'flatten the model', or any mention of checking Modelica code with WSMKernelX. It applies just as much when Modelica is a means to another end and you chose it yourself — modelling a circuit, mechanism or process to check some other implementation against it — and neither Modelica nor System Modeler was ever named in the request."
+name: simulate-modelica-realtime
+description: "Run a compiled Modelica model as a live, real-time simulation server and interact with it over the System Modeler simulation TCP interface: start, pause, resume and stop it, set inputs and tunable parameters while it runs, read and stream values, or send raw protocol commands, on an executable it launches or one already running in Simulation Center. Use it whenever a simulation must run in real time or as a server, take input or parameter changes mid-run, be driven from Python or another program, or feed an operator, hardware-in-the-loop or live-dashboard demo. Triggers on phrases like 'run in real time', 'simulate in server mode', 'connect to the running simulation', 'change the input while it runs', 'stream simulation values', 'hardware in the loop', 'simulation server', 'TCP interface of the simulation'. For one-shot simulations use simulate-modelica; for live interaction from Wolfram Language use wolfram-language-modelica."
 ---
 
-# Validate Modelica Model
+# Talk to a simulation executable
 
-This skill validates Modelica models (.mo files) by flattening them with WSMKernelX, which checks for structural errors (equations, types, connections). A successful flatten means the model is structurally valid.
+Every simulation System Modeler builds is an executable plus a `.sim` settings file, and every
+running simulation has a built-in TCP server. A client can start, pause, resume and stop the run,
+set top-level inputs at any time, set tunable parameters while the solver runs, read any variable,
+and subscribe to variables that are then streamed while it runs. This skill does that with the
+stdlib-only client `<scripts-dir>/wsmsim.py` and its command line `<scripts-dir>/wsm_realtime.py`.
+Resolve `<scripts-dir>` as in [Appendix → Locating the launcher](#locating-the-launcher),
+and follow its shell and Python rules per OS.
 
-## Before you run anything
+## 1. Get a simulation to talk to
 
-This skill drives WSMKernelX through the shared launcher
-`../scripts/wsm_run.py`. **Read [the shared-conventions appendix at the end of this file](#appendix-shared-conventions-for-the-modelica-skills)
-first** — launcher resolution, the Windows-vs-Unix shell/Python rules, the
-temp-dir and cleanup conventions, the JSON-array output gotcha, and the MSL 4.x
-dialect notes that every step below assumes.
+Either of these works:
 
-The launcher writes everything into `_wsm_validate_temp/` next to the `.mo`
-file and leaves `validate.out.json` there for you to parse. Tell the user:
-"Working in temporary directory `_wsm_validate_temp/`. This will be deleted
-after validation."
+- **Launch an executable.** Build the model with the simulate-modelica skill, and keep
+  `_wsm_simulate_temp/` next to the model: it holds `<Model>_<id>.exe` and its `.sim`. Give that
+  directory as `<target>` with `--model ModelName` (or the executable path) below; the CLI starts
+  it in server mode, paced to the wall clock, on a free port.
+- **Attach to a running simulation.** A simulation started in Simulation Center, or by hand with
+  `<Model>_<id>.exe -f <Model>_<id>.sim -server 127.0.0.1:7000`, is already listening; the
+  simulation log shows the address (`Server listening on 127.0.0.1:<port>`). Pass
+  `--attach host:port` instead of a target. An attached client never stops the simulation when it
+  disconnects, so several clients can share one run.
 
-## Workflow
+Only top-level `input` variables can be changed while the solver runs, and only tunable
+parameters after the start. If the model exposes nothing to steer, add `input Real u(start = ...)`
+variables (or a wrapper model) for the quantities the user wants to drive, and make the display
+quantities top-level `output`s; validate with validate-modelica.
 
-### 1. Identify the model file and name
-
-Identify the `.mo` file and extract the **model name** — see [Appendix → Picking the model name](#picking-the-model-name). For a **directory-form (multi-file) library**, point `--model` at the library folder (not one class file) and pass the full dotted `--name` — see [Appendix → Directory-form (multi-file) libraries](#directory-form-multi-file-libraries).
-
-### 2. Run the launcher
+## 2. Inspect the interface as the server sees it
 
 ```bash
-python3 "<scripts-dir>/wsm_run.py" --mode validate \
-  --model "<path-to-ModelFile.mo>" --name ModelName --timeout 60
+python3 "<scripts-dir>/wsm_realtime.py" info <target> --model ModelName
 ```
 
-The launcher auto-detects whether the model needs the Modelica Standard
-Library and loads the right MSL version; force it with `--msl yes|no` or pin a
-version with `--msl-version 4.1.0`. If the model uses an installed non-MSL
-library (e.g. `Hydraulic`), add `--load-library <Name>` — see
-[Appendix → Using non-MSL libraries](#using-non-msl-libraries-hydraulic-and-other-installed-libraries).
-Timeout: allow up to 60 seconds — complex models with many components can take a while to flatten.
+Prints inputs and their start values, outputs, tunable parameters and states. Use these exact
+names below; nested names use dots (`load.p`), array elements `[k]`. Every streamed sample already
+carries the simulation time, so do not subscribe to `time`.
 
-A plain run does not evaluate the model's graphic annotations, so an error in an
-`Icon`, `Diagram` or `Placement` passes unnoticed. Add `--graphics` when those
-annotations are what changed, or when the user is asking about the model's
-graphics — see
-[Appendix → Checking graphic annotations](#checking-graphic-annotations).
+## 3. Run a scripted scenario
 
-If the launcher can't find the System Modeler install, see
-[Appendix → When the install or compiler isn't found](#when-the-install-or-compiler-isnt-found).
+```bash
+python3 "<scripts-dir>/wsm_realtime.py" run <target> --model ModelName \
+  --watch flow,angle,status --duration 30 --scale 2 \
+  --set 5:Pset=4500 --set 12:breakerClosed=false --param 0:sensWarn=3 --param 8:T=1 \
+  --csv run.csv
+```
 
-### 3. Parse the output
+- `--scale N`: N simulated seconds per wall second; `--fast` runs without pacing and takes no
+  timed changes.
+- `--set T:name=value`: input change T simulated seconds into the run. `--param T:name=value`:
+  parameter change; T=0 is applied before the start, later times need a tunable parameter.
+  `--duration` and T count from the start or, with `--attach` to a simulation that is already
+  running, from the moment of attaching; a simulation that has not started yet is started.
+- Values stream once per **output interval** (the model's `Interval`, or `--interval 0.01`), plus
+  one sample at each event instant carrying the values from just before the event. A change is
+  sent at the first sample at or after its time and takes effect from the next solver step, so
+  up to one output interval later; model the change in Modelica when its exact time matters.
+- `--step 0.01 --method explicit-euler`: fixed-step integration (also `rk4`, `heuns-method`);
+  the default is the model's own solver settings.
+- One printed row per `--print-every` simulated seconds; `--csv` records every sample received.
+- The run ends with the packet count and the gaps longer than the output interval, and exits
+  non-zero if simulated time stopped short of `--duration`. The server
+  sends the newest sample whenever it can, so a gap means samples were skipped (common with
+  `--fast`); the stream is not a complete result — simulate-modelica gives that.
 
-WSMKernelX writes structured results to `validate.out.json` in the temp
-directory — a JSON *array*; take the first element. **`status.flatten`**
-(`"Pass"`/`"Fail"`) is the primary result; `flat_model` holds the flattened
-class (useful for debugging). Field reference:
-[Appendix → Reading the JSON output](#reading-the-json-output).
+## 4. Send protocol commands directly
 
-### 4. Report results
+```bash
+python3 "<scripts-dir>/wsm_realtime.py" cmd --attach 127.0.0.1:63597 \
+  -c 'getVariableNames()' -c 'setInputValues({"u", 2.3})' -c 'getVariableValues({"y"})'
+```
 
-Summarize clearly:
-- **Pass**: State the model validated successfully. Mention any warnings if present.
-- **Fail**: Show the errors. Include relevant parts of the flattened model if it helps diagnose the issue.
+Each reply is printed as the server sends it (`{"u", "y", "k"}`, `{true}`, `{4.6}`); a refused
+command prints the server's error text. Without `-c` the commands are read one per line from
+standard input. Commands:
 
-### 5. Clean up
+| Command | Effect |
+|---|---|
+| `getModelName()`, `getTime()`, `getStopTime()`, `getSimulationState()` | model name; current and stop time; 1 not started, 2 running, 3 suspended |
+| `getVariableNames()`, `getInputVariableNames()`, `getOutputVariableNames()`, `getParameterNames()`, `getTunableParameterNames()`, `getStateVariableNames()` | name lists |
+| `getVariableValues({"a", "b"})` | current values |
+| `setInputValues({"u", 2.3, "v", 0})` | inputs, used from the next step |
+| `setParameterValues({"T", 1.0})` | before the start: a parameter from `getParameterNames()`; after: a tunable one |
+| `setSubscription({"a", "b"})` | returns a subscription id; values then stream on a data session |
+| `startSimulation()`, `suspendSimulation()`, `continueSimulation()`, `stopSimulation()` | run control |
 
-Remove `_wsm_validate_temp/` entirely — commands per OS: [Appendix → Temporary directories](#temporary-directories).
+Boolean values may be written `true`/`false` or `1`/`0`. To run again from the start, use the
+Restart button of the live view (section 5) or `restart()` in Python (section 6), not
+`restartSimulation()`, which ends the simulation process. Evaluated and structural parameters are
+in neither parameter list; changing them needs a rebuild.
+
+## 5. Live view with controls
+
+```bash
+python3 "<scripts-dir>/wsm_realtime.py" plot <target> --model ModelName \
+  --watch flow,angle --sliders Pset:0:7500,V:0.85:1.1 --toggles breakerClosed
+```
+
+Live curves with sliders and check boxes writing the inputs, and a Pause/Run button; a launched
+simulation also gets a Restart button. Needs a display.
+
+## 6. Custom logic from Python
+
+```python
+import sys; sys.path.insert(0, "<scripts-dir>")
+from wsmsim import WsmSimulation, find_simulation
+exe, sim = find_simulation("<build-dir>", "ModelName")
+with WsmSimulation.launch(exe, sim, scale=1.0) as s:          # or WsmSimulation.attach(host, port)
+    sub = s.subscribe(["flow", "angle"])
+    s.set_parameters(sensWarn=3.0)                              # before start
+    s.start()
+    for t, row in s.stream(sub, seconds=10):                    # (sim_time, {name: value}) per sample
+        if row["angle"] > 30:
+            s.set_inputs(Pset=3000)                             # Booleans may be True/False here
+    s.set_parameters(T=1.0)                                     # tunable parameter, mid-run
+    s.suspend(); s.resume(); s.get_values(["flow", "P"]); s.stop()
+```
+
+`launch` writes an interactive copy of the `.sim` (long stop time, the model's output interval,
+real-time pacing, no result file), starts the executable on a free port and removes the copy when
+it exits; `attach` connects to a running server and leaves it running on close. `s.latest(sub)`
+gives the newest sample without consuming the stream; `s.send_inputs([...])` sends all inputs as
+one binary packet in `s.inputs` order, for high-rate feeds (paced runs only); `s.restart()`
+relaunches a launched simulation from the start, keeping its subscriptions and the values set
+through `s`; `s.scs.command_raw(text)` sends any protocol command.
+
+## Behaviour to rely on
+
+- The server does nothing until `startSimulation()`; connecting does not start the run.
+- Without real-time pacing the executable runs its whole horizon as fast as it can. The CLI and
+  `launch` enable pacing unless told otherwise; a simulation started elsewhere keeps its own
+  settings.
+- Suspending stops the run at the end of the current step and holds the time there.
+- When a simulation reaches its stop time the process exits and closes every connection.
+
+## Protocol, for clients in other languages
+
+Documented in the System Modeler User Guide, "Communication with Simulation via TCP"
+(reference.wolfram.com/system-modeler/UserGuide/CommunicationwithSimulationviaTCP.html). In
+short: every packet is an 8-byte little-endian header — `version` (1), `type`, one byte with the
+subscription id on data packets, one byte with the simulation state, and a 4-byte payload length —
+followed by the payload. A control session opens with a `HELLO_SCS` packet (type 1) and gets its
+session id back (`{1}`); commands are text in `CMD` packets (type 3), answered by `CMD_REPLY` (4)
+or `CMD_ERROR` (5). A data session opens with `HELLO_SDS` (type 2) carrying that session id in
+braces, and then receives type 6 packets: the simulation time followed by the subscribed values,
+all doubles. A type 8 packet on the data session sets all inputs at once, as doubles. Send Boolean
+values in commands as `1`/`0`. `wsmsim.py` is a complete implementation.
+
+## 7. Report and clean up
+
+Report the scenario, what changed at which simulated time, the key values, and the packet count
+and gaps. A launched executable leaves `<Model>_<id>_server.log` next to itself; remove the
+whole `_wsm_simulate_temp/` when the user is done with the executable — commands per OS:
+[Appendix → Temporary directories](#temporary-directories).
 
 ## Edge cases
 
-- **Packages / name mismatches**: parse the actual `model`/`package` declaration, not the filename — see [Appendix → Picking the model name](#picking-the-model-name).
-- **`Unknown library: X` on a multi-file library**: you pointed `--model` at a single class file; point it at the library folder instead — see [Appendix → Directory-form (multi-file) libraries](#directory-form-multi-file-libraries).
-- **WSMKernelX not found**: see [Appendix → When the install or compiler isn't found](#when-the-install-or-compiler-isnt-found).
-- **MSL dialect / `Element not found`**: this toolchain ships MSL 4.x — author with the 4.x names; the 3.2 names and misremembered paths flatten with confusing "not found" errors. Look the correct path up with `search-modelica-docs` (don't grep the install tree). See [Appendix → MSL 4.x dialect](#msl-4x-dialect).
+- **`Unknown variable`** (subscribe, read) or **`Not an input variable`** (set): check the names
+  with `info`.
+- **`Not a valid parameter to set`**: after the start the parameter is not tunable; before it, the
+  parameter is evaluated or structural. Set it at T=0, or change the model and rebuild.
+- **Executable exits at once**: read `<Model>_<id>_server.log` in the build directory; a model
+  that fails initialization or a wrong `.sim` path shows there.
+- **Simulated time stops advancing while samples keep arriving** (`run` reports that it stopped
+  short of `--duration`): the model is chattering on an event, e.g. a condition that switches the integrator of a saturated controller on and off.
+  The server log shows `Event burst count reached warning threshold` and the expression causing
+  it; reformulate that part of the model and rebuild.
+- **Connection closed or refused on an attached run**: the simulation reached its stop time and
+  exited; a simulation started elsewhere keeps the stop time from its own settings.
+- **Web or other clients**: the server speaks TCP only; put a small bridge (WebSocket or
+  server-sent events) in front of `wsmsim.py` for browsers.
 
 ---
 

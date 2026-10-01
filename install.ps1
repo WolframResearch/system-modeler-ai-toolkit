@@ -81,6 +81,22 @@ function Resolve-PhysicalPath([string]$Path) {
   return $full
 }
 
+$InstallMarker = ".wsm-skills-install"
+
+function Get-InstallMarkerSource($Item) {
+  # A copy-mode install leaves a marker naming the tree it came from, because a
+  # copied directory carries no link we could follow. Its presence is what marks
+  # the directory as one of ours: a directory the user made themselves has none.
+  # The recorded path is reported, not required to match.
+  $m = Join-Path $Item.FullName $InstallMarker
+  if (-not (Test-Path -LiteralPath $m -PathType Leaf)) { return $null }
+  try {
+    $recorded = (Get-Content -LiteralPath $m -TotalCount 1 -ErrorAction Stop)
+  } catch { return $null }
+  if (-not $recorded) { return $null }
+  return ([string]$recorded).Trim()
+}
+
 function Test-OwnedByRepo($Item) {
   # May we replace $Item silently? Only if it is a junction/symlink that points
   # back into this repo (a previous install), or a dangling one - typically a
@@ -98,6 +114,19 @@ function Test-OwnedByRepo($Item) {
   if ($t.ToLowerInvariant().StartsWith(($root + $sep).ToLowerInvariant())) { return $true }
   if (-not (Test-Path -LiteralPath $t)) { return $true }   # dangling link
   return $false
+}
+
+function Test-LegacyCopy($Item, [string]$Name) {
+  # A copy made by an installer that wrote no marker: a skill directory whose
+  # SKILL.md carries this skill's name, or a scripts/ directory with the launcher.
+  if (-not $Item.PSIsContainer) { return $false }
+  if ($Item.Attributes -band [IO.FileAttributes]::ReparsePoint) { return $false }
+  if ($Name -eq 'scripts') {
+    return [bool](Test-Path -LiteralPath (Join-Path $Item.FullName 'wsm_run.py') -PathType Leaf)
+  }
+  $skill = Join-Path $Item.FullName 'SKILL.md'
+  if (-not (Test-Path -LiteralPath $skill -PathType Leaf)) { return $false }
+  return [bool](Select-String -LiteralPath $skill -Pattern ("^name: " + [regex]::Escape($Name) + "$") -Quiet)
 }
 
 function Remove-Existing([string]$Path) {
@@ -131,6 +160,12 @@ function Copy-IntoPlace([string]$Src, [string]$Dst) {
       Remove-Item -LiteralPath $tmp -Recurse -Force
     }
     throw
+  }
+  # Record where this copy came from, inside the staged directory, so the marker
+  # appears in the same move that publishes the install.
+  if (Test-Path -LiteralPath $tmp -PathType Container) {
+    $enc = New-Object System.Text.UTF8Encoding($false)
+    [IO.File]::WriteAllText((Join-Path $tmp $InstallMarker), $RepoRoot + "`n", $enc)
   }
   Remove-Existing $Dst
   Move-Item -LiteralPath $tmp -Destination $Dst
@@ -176,6 +211,7 @@ $mode = if ($Copy) { "copy" } else { "link (junction)" }
 Write-Host "Installing skills from $RepoRoot"
 Write-Host "                  into $Target   (mode: $mode)`n"
 
+$skipped = 0
 foreach ($item in $Items) {
   $src = Join-Path $RepoRoot $item
   $dst = Join-Path $Target $item
@@ -188,12 +224,19 @@ foreach ($item in $Items) {
   # Get-Item -Force so dangling junctions are seen too (Test-Path hides them).
   $existing = Get-Item -LiteralPath $dst -Force -ErrorAction SilentlyContinue
   if ($existing) {
-    if (Test-OwnedByRepo $existing) {
-      # our own link from a previous install; replace silently
+    $markerSrc = Get-InstallMarkerSource $existing
+    if ((Test-OwnedByRepo $existing) -or $markerSrc) {
+      # ours from a previous install; replace it
+      if ($markerSrc -and ($markerSrc.TrimEnd([char]92, [char]47) -ine $RepoRoot.TrimEnd([char]92, [char]47))) {
+        Write-Host "  note  $item was installed from $markerSrc; replacing"
+      }
+    } elseif (Test-LegacyCopy $existing $item) {
+      Write-Host "  note  $item is a copy from an earlier install; replacing"
     } elseif ($Force) {
       Write-Warning "replacing $dst (not installed from this repo) because of -Force"
     } else {
       Write-Warning "$dst exists and was not installed from this repo; skipping - remove it manually or re-run with -Force"
+      $skipped++
       continue
     }
   }
@@ -211,5 +254,9 @@ foreach ($item in $Items) {
   }
 }
 
+if ($skipped -gt 0) {
+  Write-Error "$skipped item(s) were skipped, so the install is incomplete; see the warnings above."
+  exit 1
+}
 Write-Host "`nDone. The launcher is reachable from each skill as ..\scripts\wsm_run.py"
-Write-Host "Verify with:  python3 `"$Target\scripts\wsm_run.py`" --mode info  (or 'py -3' on Windows)"
+Write-Host "Verify with:  python `"$Target\scripts\wsm_run.py`" --mode info  (or 'py -3')"

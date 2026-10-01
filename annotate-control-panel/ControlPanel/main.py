@@ -28,7 +28,7 @@ from . import simvars as simvars_mod
 from . import suggest as suggest_mod
 from .inject import inject_control_panels
 from .parser import parse, mask_code, ParseError
-from mo_edit import (dominant_eol, write_atomic,
+from mo_edit import (read_for_edit, write_atomic,
                      balanced_close as _balanced_close, find_call_open as _find_call_open)
 
 
@@ -142,7 +142,7 @@ def cmd_suggest(args, text, classes) -> int:
     return 0
 
 
-def cmd_annotate(args, text, classes, eol="\n") -> int:
+def cmd_annotate(args, text, classes, eol) -> int:
     if not args.spec:
         _eprint("error: --annotate requires --spec PATH (a control-panel-spec JSON)")
         return 2
@@ -224,13 +224,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        with open(args.file, "r", encoding="utf-8", newline="") as f:
-            raw = f.read()
+        text, eol = read_for_edit(args.file)
     except OSError as e:
         _eprint("error: cannot read %s: %s" % (args.file, e))
         return 2
-    eol = dominant_eol(raw)
-    text = raw.replace("\r\n", "\n").replace("\r", "\n")
     try:
         classes = parse(text)
         if args.suggest:

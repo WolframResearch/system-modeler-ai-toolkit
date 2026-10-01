@@ -1,6 +1,6 @@
 ---
 name: search-modelica-docs
-description: "Search the bundled Modelica and Wolfram System Modeler documentation for authoritative answers, then cite the source. Use this skill whenever the user asks a how-to, what-is, or why question about the Modelica language (syntax, semantics, equations, when/if, arrays, connectors, annotations, the language specification), about Wolfram System Modeler (the tool: building/simulating models, the GUI, tutorials, release/what's-new notes), OR about the Modelica Standard Library (which MSL component/block to use, its exact parameter names and defaults, example models). Triggers on phrases like 'how do I write a when statement', 'what does the Modelica spec say about ...', 'how do I simulate this in System Modeler', 'is this valid Modelica', 'which MSL block does ...', 'what are the parameters of Modelica.X.Y', 'find an example model that ...', 'look it up in the docs'. Also use it while WRITING a model that uses MSL components, to ground parameter names and wiring instead of recalling them. Prefer this over answering Modelica/System Modeler/MSL questions from memory."
+description: "Search the bundled Modelica and Wolfram System Modeler documentation for authoritative answers, then cite the source. Use this skill whenever the user asks a how-to, what-is, or why question about the Modelica language (syntax, semantics, equations, arrays, connectors, annotations, the specification), about Wolfram System Modeler (building/simulating models, the GUI, tutorials, release notes), or about the Modelica Standard Library (which component to use, its parameter names and defaults, example models). Triggers on phrases like 'how do I write a when statement', 'what does the Modelica spec say about ...', 'how do I simulate this in System Modeler', 'is this valid Modelica', 'which MSL block does ...', 'what are the parameters of Modelica.X.Y', 'find an example model that ...'. Also use it while writing a model that uses MSL components, to ground parameter names and wiring instead of recalling them. Prefer it over answering from memory."
 ---
 
 # Search Modelica & System Modeler Documentation (BM25)
@@ -10,6 +10,12 @@ A self-contained, **offline** documentation search. It ranks passages with BM25
 over three prebuilt corpora and returns the matching chunks with their citation
 URLs. Use it to ground answers in real documentation instead of recalling from
 memory.
+
+Answering the question is often not the whole job: once the answer points at a
+model, the rest of the System Modeler toolkit is available — `validate-modelica`
+to check one compiles, `simulate-modelica` to run it, `diagnose-modelica` when it
+will not build or is unaccountably slow, `modelica-model-architecture` before
+writing one, and the `annotate-*` skills for icons, diagrams and stored plots.
 
 ## The three corpora (and how to route)
 
@@ -67,9 +73,6 @@ python -m docsearch.main --query "array construction" --json
 
 # List corpora + aliases / counts.
 python -m docsearch.main --corpora
-
-# (Maintainer, repo checkout only) measure retrieval quality against the gold sets.
-python -m docsearch.main --eval --k 5
 ```
 
 Flags: `--corpus` (route, default `all`), `--k` (results, default 5), `--full`
@@ -108,6 +111,3 @@ Flags: `--corpus` (route, default `all`), `--k` (results, default 5), `--full`
 
 - Retrieval is deterministic and local; identical queries return identical
   results. There is no learning or external call.
-- The `--eval` gold sets (`docsearch/data/eval/*.jsonl`) are query→URL
-  pairs used only to measure recall@k / MRR when tuning; normal use never reads
-  them, and they are not shipped in the release bundle (repo checkout only).

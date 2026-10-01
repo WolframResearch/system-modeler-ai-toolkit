@@ -26,7 +26,7 @@ from . import suggest as suggest_mod
 from . import simvars as simvars_mod
 from .inject import inject_figures
 from .parser import parse, ParseError
-from mo_edit import dominant_eol, write_atomic  # importable once .parser has run
+from mo_edit import read_for_edit, write_atomic  # importable once .parser has run
 
 
 def _eprint(*a) -> None:
@@ -116,7 +116,7 @@ def cmd_suggest(args, text, classes) -> int:
     return 0
 
 
-def cmd_annotate(args, text, classes, eol="\n") -> int:
+def cmd_annotate(args, text, classes, eol) -> int:
     if not args.spec:
         _eprint("error: --annotate requires --spec PATH (a figures-spec JSON)")
         return 2
@@ -195,15 +195,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    # newline="" keeps the raw line endings so the file's own EOL can be restored on write
     try:
-        with open(args.file, "r", encoding="utf-8", newline="") as f:
-            raw = f.read()
+        text, eol = read_for_edit(args.file)
     except OSError as e:
         _eprint("error: cannot read %s: %s" % (args.file, e))
         return 2
-    eol = dominant_eol(raw)
-    text = raw.replace("\r\n", "\n").replace("\r", "\n")
     # Surface a malformed model, an unreadable/bad spec/vars/sim file, or invalid
     # JSON/XML as a clean 'error:' with exit 2 instead of an uncaught traceback.
     try:

@@ -10,6 +10,8 @@ unknown domain can still be drawn from primitives based on the model's descripti
 
 from __future__ import annotations
 
+import re
+
 from . import colors
 from .parser import ClassSpan, Connector
 
@@ -67,6 +69,8 @@ _DEVICE_EDGE_OVERRIDES = {
     "pump": {"port_a": "L", "inlet": "L", "port_b": "R", "outlet": "R"},
     "valve": {"port_a": "L", "inlet": "L", "port_b": "R", "outlet": "R"},
     "pipe": {"port_a": "L", "inlet": "L", "port_b": "R", "outlet": "R"},
+    # the ground glyph draws its pin on top, whatever the single connector is called
+    "ground": {"p": "T", "n": "T", "pin": "T", "port": "T", "port_p": "T", "flange": "T"},
 }
 
 _VALID_EDGES = ("L", "R", "T", "B")
@@ -90,6 +94,9 @@ def _device_kind(cls: ClassSpan) -> str:
         return "pipe"
     if "heatcapacitor" in s or "heat capacitor" in s or "thermal mass" in s or "heatcap" in s:
         return "heatcap"
+    # a CamelCase segment, so MagneticGround matches but Playground/Background do not
+    if cls.name.lower() == "ground" or "Ground" in re.findall(r"[A-Z][a-z]*", cls.name):
+        return "ground"
     return "block"
 
 
@@ -140,12 +147,6 @@ def assign_connector_edges(connectors: list, device: str, overrides: dict | None
 
 def _round(v: float) -> int:
     return int(round(v / 10.0)) * 10
-
-
-def connector_placement(px: int, py: int) -> str:
-    """Placement annotation anchoring a connector to the icon (and diagram) boundary."""
-    ext = "extent={{%d,%d},{%d,%d}}" % (px - 10, py - 10, px + 10, py + 10)
-    return ("Placement(transformation(%s), iconTransformation(%s))" % (ext, ext))
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +245,17 @@ def _glyph_heatcap() -> list:
     ]
 
 
+def _glyph_ground() -> list:
+    # stem down from the pin at the top, then the three shortening bars. Drawn neutral, not
+    # in a domain color: this is the fallback for a Ground class in any domain.
+    return [
+        "Line(points={{0,90},{0,20}}, color={0,0,0})",
+        "Line(points={{-60,20},{60,20}}, color={0,0,0}, thickness=0.6)",
+        "Line(points={{-36,-6},{36,-6}}, color={0,0,0}, thickness=0.6)",
+        "Line(points={{-12,-32},{12,-32}}, color={0,0,0}, thickness=0.6)",
+    ]
+
+
 def _glyph_connector(cls: ClassSpan) -> list:
     """A connector's own symbol: a full-frame square filled in its domain color."""
     rgb = colors.color_for_type(cls.name)
@@ -261,6 +273,7 @@ _GLYPHS = {
     "valve": _glyph_valve,
     "pipe": _glyph_pipe,
     "heatcap": _glyph_heatcap,
+    "ground": _glyph_ground,
 }
 
 

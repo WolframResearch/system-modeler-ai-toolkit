@@ -16,6 +16,11 @@ The script produces a structured diagnostic report covering:
 - Non-trivial blocks with solvability details
 - Eliminated variable aliases
 - Runtime performance (from res.log)
+
+With --block SECTION:INDEX it reports one block instead: the classes and lines
+its equations were flattened from, the variables it solves and the equations
+themselves. That is how a block named by the profiler is followed back to the
+model text.
 """
 
 import json
@@ -267,22 +272,116 @@ def print_summary(s):
               % (g('integration_time'), g('function_evals'), g('events')))
 
 
+def print_block_detail(data, section, index, equations_shown):
+    """Everything about one block, for following a profile back to the model."""
+    blocks = [b for b in data.get(section) or ()
+              if isinstance(b, dict) and b.get("block-index") == index]
+    if not blocks:
+        sys.exit("ERROR: no block %d in section '%s' (sections: %s)"
+                 % (index, section, ", ".join(k for k in data if data.get(k))))
+    block = blocks[0]
+    variables = bd.block_var_names(block)
+    equations = block.get("equations") or []
+
+    print("=" * 70)
+    print("%s block %d  --  %s" % (section, index, bd.section_label(section)))
+    print("=" * 70)
+    print("  %d equation(s), %d variable(s), %s"
+          % (len(equations), len(variables), block.get("variability", "?")))
+    for system in bd.find_solver_systems(block):
+        print("  system %s: %s, Jacobian %s%s"
+              % (system["system-id"], system["system-type"],
+                 bd.classify_jacobian(system["Jacobian"]),
+                 ", torn to %d iteration variable(s)" % system["torn-size"]
+                 if system["torn-size"] else ""))
+
+    sources = bd.block_sources(block)
+    print()
+    print("--- Where these equations come from ---")
+    if not sources:
+        print("  (the build recorded no source spans for this block)")
+    for path, (lines, count) in sorted(sources.items(), key=lambda x: -x[1][1]):
+        print("  %4d eq  %s  line%s %s"
+              % (count, path, "" if len(lines) == 1 else "s",
+                 ", ".join(str(l) for l in lines[:12])
+                 + (", ..." if len(lines) > 12 else "")))
+
+    print()
+    print("--- Variables solved here ---")
+    by_component = {}
+    for name in variables:
+        component = bd.component_of(name) or "(compiler-generated)"
+        by_component.setdefault(component, []).append(name)
+    for component, names in sorted(by_component.items(), key=lambda x: -len(x[1])):
+        print("  %4d  %s   e.g. %s" % (len(names), component, names[0]))
+
+    print()
+    print("--- Equations (%d of %d) ---"
+          % (min(equations_shown, len(equations)), len(equations)))
+    for equation in equations[:equations_shown]:
+        origin = bd.equation_source(equation)
+        print("  [%s]" % ("%s:%d" % origin if origin else "no source"))
+        print("    " + " ".join(equation.get("text", "").split())[:300])
+
+
+def _artifacts(tempdir):
+    """The newest build's (blockdebug, header, res.log) in a diagnose temp dir. A
+    temp dir reused across models holds several sets, so the stem of the newest
+    _blockdebug.json picks the matching header and log."""
+    debug = [os.path.join(tempdir, f) for f in os.listdir(tempdir)
+             if f.endswith("_blockdebug.json")]
+    if not debug:
+        sys.exit("ERROR: no *_blockdebug.json in %s -- run wsm_run.py --mode "
+                 "diagnose first" % tempdir)
+    debug.sort(key=os.path.getmtime)
+    newest = debug[-1]
+    stem = os.path.basename(newest)[:-len("_blockdebug.json")]
+    optional = lambda suffix: (
+        os.path.join(tempdir, stem + suffix)
+        if os.path.isfile(os.path.join(tempdir, stem + suffix)) else None)
+    return newest, optional("_header.h"), optional("_res.log")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate structural report from Modelica blockdebug JSON"
     )
-    parser.add_argument("blockdebug_json", help="Path to _blockdebug.json file")
+    parser.add_argument("blockdebug_json", nargs="?",
+                        help="Path to _blockdebug.json file (or use --tempdir)")
+    parser.add_argument("--tempdir", metavar="DIR",
+                        help="A --mode diagnose temp dir: find the newest model's "
+                             "_blockdebug.json, _header.h and _res.log in it "
+                             "instead of naming all three")
     parser.add_argument("--header", help="Path to _header.h file for variable counts")
     parser.add_argument("--reslog", help="Path to _res.log file for runtime stats")
     parser.add_argument("--summary", action="store_true",
                         help="Print only the key metrics (a few lines), not the full report")
     parser.add_argument("--json", action="store_true",
                         help="Emit the key metrics as JSON")
+    parser.add_argument("--block", metavar="SECTION:INDEX",
+                        help="Print everything about one block instead of the full "
+                             "report -- its equations, the classes and lines they "
+                             "were flattened from, and the variables it solves. "
+                             "Takes a block named by the profile, e.g. ode:366.")
+    parser.add_argument("--equations", type=int, default=10, metavar="N",
+                        help="--block: how many of the block's equations to print "
+                             "(default 10)")
 
     args = parser.parse_args()
+    if args.tempdir:
+        args.blockdebug_json, args.header, args.reslog = _artifacts(args.tempdir)
+    elif not args.blockdebug_json:
+        parser.error("give a _blockdebug.json path, or --tempdir")
     bd.enable_utf8_console()
 
     data = bd.load(args.blockdebug_json)
+
+    if args.block:
+        section, _, index = args.block.partition(":")
+        if not index.strip().isdigit():
+            sys.exit("ERROR: --block wants SECTION:INDEX, e.g. ode:366")
+        print_block_detail(data, section.strip(), int(index), args.equations)
+        return
 
     if args.summary or args.json:
         defines = bd.parse_header(args.header) if args.header else {}

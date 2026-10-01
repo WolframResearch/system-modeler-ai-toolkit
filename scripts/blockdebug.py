@@ -62,6 +62,52 @@ def block_var_names(block):
     return [v["name"] for v in block.get("variables", [])]
 
 
+# An equation's "source" is "Some.Class.Path:line:col-line:col".
+_SOURCE_RE = re.compile(r"^(.+?):(\d+):\d+-\d+:\d+$")
+
+
+def equation_source(equation):
+    """(class path, line) the equation was flattened from, or None."""
+    m = _SOURCE_RE.match(equation.get("source") or "")
+    if not m or m.group(1) in ("", "?"):
+        return None
+    return m.group(1), int(m.group(2))
+
+
+def block_sources(block):
+    """Where a block's equations come from: {class path: (lines, equation count)},
+    which is what maps a hot block back to the model text."""
+    sources = {}
+    for equation in block.get("equations") or ():
+        origin = equation_source(equation)
+        if not origin:
+            continue
+        lines, count = sources.get(origin[0], (set(), 0))
+        lines.add(origin[1])
+        sources[origin[0]] = (lines, count + 1)
+    return {p: (sorted(l), c) for p, (l, c) in sources.items()}
+
+
+_DER_PREFIX_RE = re.compile(r"^(?:der\()+")
+_COMPONENT_RE = re.compile(r"^([A-Za-z_$][\w$]*)")
+
+
+def component_of(variable):
+    """The top-level component a solved variable belongs to. Derivatives nest
+    (`der(der(body.r[1]))`), so every wrapper comes off first; compiler-generated
+    names (`$eventState7` and the like) belong to no component and give None."""
+    m = _COMPONENT_RE.match(_DER_PREFIX_RE.sub("", variable))
+    if not m:
+        return None
+    return None if m.group(1).startswith("$") else m.group(1)
+
+
+def short_class(path):
+    """The tail of a class path, enough to recognise it in a one-line summary."""
+    parts = path.split(".")
+    return ".".join(parts[-2:]) if len(parts) > 1 else path
+
+
 def get_system_type(block):
     """Extract the system-type from a block's nested 'systems' structure.
 

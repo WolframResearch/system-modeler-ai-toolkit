@@ -13,6 +13,8 @@ import re
 
 from . import icon as icon_mod
 from . import layout as layout_mod
+from . import pins as pins_mod
+from . import references as references_mod
 from . import routing as routing_mod
 from .classify import classify
 from .parser import ClassSpan, QUALIFIERS, mask_code, parse
@@ -24,10 +26,17 @@ from mo_edit import Edit, splice, indent_at as _indent_at, balanced_close, find_
 # ---------------------------------------------------------------------------
 
 def _box(x: int, y: int) -> str:
-    return "extent={{%d,%d},{%d,%d}}" % (x - 10, y - 10, x + 10, y + 10)
+    return "origin={%d,%d}, extent={{-10,-10},{10,10}}" % (x, y)
 
 
 def _connector_placement(icon_pt, diag_pt) -> str:
+    """The position goes in ``origin`` with the extent centred on it.
+
+    A Placement transformation rotates about {0, 0} and only then shifts by ``origin``
+    (Modelica specification, Transformation), so this is the one form whose rotation
+    centre is the connector itself; baking the position into the extent instead leaves
+    the rotation centre — and the handle the GUI draws — at the coordinate system origin.
+    """
     ix, iy = icon_pt
     dx, dy = diag_pt if diag_pt is not None else icon_pt
     return ("Placement(transformation(%s), iconTransformation(%s))"
@@ -68,7 +77,8 @@ def build_class_edits(text: str, mask: str, cls: ClassSpan, opts: dict) -> tuple
         summary["actions"].append("custom Icon (authored)" if custom else "custom Icon")
 
     if plan.wants_diagram:
-        layout_res = layout_mod.compute_layout(cls, opts.get("type_ports"))
+        layout_res = layout_mod.compute_layout(cls, opts.get("type_ports"),
+                                               opts.get("local_refs"))
         (x1, y1), (x2, y2) = layout_res["extent"]
         if opts.get("extent") is not None:   # 0 is invalid, rejected by the CLI validator
             n = abs(opts["extent"])
@@ -100,8 +110,7 @@ def build_class_edits(text: str, mask: str, cls: ClassSpan, opts: dict) -> tuple
         placements = layout_res["instances"]
 
         def inst_ann(inst):
-            ox, oy, rot = placements.get(inst.name, (0, 0, 0))
-            return layout_mod.instance_placement(ox, oy, rot)
+            return layout_mod.instance_placement(*placements.get(inst.name, (0, 0, 0, False)))
         iedits, ninst = _decl_group_edits(text, mask, cls.instances, inst_ann)
         edits += iedits
         if ninst:
@@ -119,8 +128,35 @@ def build_class_edits(text: str, mask: str, cls: ClassSpan, opts: dict) -> tuple
             n_lines += 1
         if n_lines:
             summary["actions"].append("%d Line" % n_lines)
+        summary["warnings"] = diagram_warnings(cls)
 
     return edits, summary
+
+
+def diagram_warnings(cls: ClassSpan) -> list:
+    """What the diagram of ``cls`` cannot draw faithfully."""
+    out = []
+    wired = {e.split("[")[0] for cn in cls.connects for e in (cn.from_inst, cn.to_inst)}
+    for inst in cls.instances:
+        if getattr(inst, "pins_unknown", False) and inst.name in wired:
+            out.append("pins of %s (%s) are not known; its lines end on guessed positions"
+                       % (inst.name, pins_mod.type_of(inst)))
+    declared = {i.name for i in cls.instances} | {c.name for c in cls.connectors}
+    for cn in cls.connects:
+        for end in (cn.from_inst, cn.to_inst):
+            name = end.split("[")[0]
+            if name not in declared:
+                out.append("connect(%s, %s): %s is not declared in this class (inherited?), "
+                           "so its line is a zero-length stub" % (cn.from_path, cn.to_path, name))
+    return out
+
+
+def parse_classes(text: str) -> list:
+    """``parse`` with each instance's type resolved through the imports in scope."""
+    classes = parse(text)
+    for _, inst, _ in pins_mod.qualify(classes):
+        inst.pins_unknown = True
+    return classes
 
 
 def _class_annotation_edit(text: str, mask: str, cls: ClassSpan, elems: list) -> Edit:
@@ -301,12 +337,13 @@ def _remove_element(text: str, pattern: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _build_type_ports(classes: list, glyphs: dict | None = None) -> dict:
-    """Map each class's leaf name -> {connector: (px,py)} in the ±100 icon frame.
+    """Map each class's leaf name -> {connector: (px, py, kind)} in the ±100 icon frame.
 
-    Connector edges are assigned exactly as the icon builder does, so a connection routed to
-    an *instance* of one of these types lands on the same pin the icon draws. A class with no
-    own connectors inherits them from an extended base (one level), which is what lets
-    instances of a thin ``extends`` (e.g. a behavioral OTA extending a PartialOTA) be routed.
+    A connector that already has a Placement keeps the point it declares; the others get
+    the edge the icon builder assigns, so a connection routed to an *instance* of one of
+    these types lands on the pin the icon draws. A class with no own connectors inherits
+    them from an extended base (one level), which is what lets instances of a thin
+    ``extends`` (e.g. a behavioral OTA extending a PartialOTA) be routed.
     """
     have = {c.name: c for c in classes if c.connectors}
     tp = {}
@@ -321,9 +358,20 @@ def _build_type_ports(classes: list, glyphs: dict | None = None) -> dict:
         if conns:
             spec = (glyphs or {}).get(c.name) or (glyphs or {}).get(src.name)
             overrides = spec.get("ports") if spec else None
-            tp[c.name] = icon_mod.assign_connector_edges(
+            points = icon_mod.assign_connector_edges(
                 conns, "custom" if spec else icon_mod._device_kind(src), overrides)
+            for conn in conns:
+                declared = pins_mod.placement_point(src.placements.get(conn.name, ""))
+                if declared is not None:
+                    points[conn.name] = declared
+            tp[c.name] = {conn.name: points[conn.name] + (pins_mod.kind_of(conn.type_name),)
+                          for conn in conns}
     return tp
+
+
+def wants_fresh_diagram(cls: ClassSpan) -> bool:
+    """True if this class gets a newly laid-out diagram (so a reference split pays off)."""
+    return classify(cls).wants_diagram and not cls.has_diagram
 
 
 def annotate(text: str, opts: dict | None = None) -> tuple:
@@ -341,14 +389,29 @@ def annotate(text: str, opts: dict | None = None) -> tuple:
         else:
             text = strip_generated(text)
     mask = mask_code(text)
-    classes = parse(text)
-    opts = {**opts, "type_ports": _build_type_ports(classes, opts.get("glyphs"))}
+    classes = parse_classes(text)
+    split_notes = {}
+    if opts.get("split_references", True):
+        # Only classes about to be laid out from scratch. Splitting a class that keeps an
+        # existing Diagram would add instances nothing places, so a re-run on an already
+        # annotated model stays the no-op it advertises.
+        targets = {c.name for c in classes
+                   if (not only or c.name == only) and wants_fresh_diagram(c)}
+        split_text, split_notes = references_mod.split_shared(text, mask, classes, targets)
+        if split_text != text:
+            text = split_text
+            mask = mask_code(text)
+            classes = parse_classes(text)
+    opts = {**opts,
+            "type_ports": _build_type_ports(classes, opts.get("glyphs")),
+            "local_refs": references_mod.local_reference_types(classes)}
     all_edits = []
     summaries = []
     for cls in classes:
         if only and cls.name != only:
             continue
         edits, summary = build_class_edits(text, mask, cls, opts)
+        summary["actions"] = split_notes.get(cls.name, []) + summary["actions"]
         all_edits += edits
         summaries.append(summary)
     return splice(text, all_edits), summaries
