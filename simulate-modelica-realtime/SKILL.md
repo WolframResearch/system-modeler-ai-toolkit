@@ -415,6 +415,10 @@ function the diagram does not support. Nothing else reports either.
 Evaluating the annotations is extra work for the frontend, so pass `--graphics`
 when the annotations are what you changed or are checking, not by default.
 
+Not every System Modeler version supports `--graphics`. On one that does not, the
+launcher drops it with a `NOTE:` and runs without it, so the graphic annotations are
+**not** checked; say so rather than reporting them as valid.
+
 ### MSL 4.x dialect
 
 This toolchain ships **MSL 4.x**. When authoring models, use the 4.x names — the

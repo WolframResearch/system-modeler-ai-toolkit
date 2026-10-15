@@ -716,6 +716,19 @@ def _dynamic_fallbacks(out_json):
             if isinstance(m, dict) and "dynamic graphic annotation" in m.get("message", "")]
 
 
+GRAPHICS_CHECK_MIN_VERSION = (15, 1)
+
+
+def _drop_unsupported_graphics_check(args, version):
+    """Turn off --graphics on a kernel too old to run it, with a note."""
+    key = _version_key(version)
+    if not args.graphics or key == (0,) or key[:2] >= GRAPHICS_CHECK_MIN_VERSION:
+        return
+    args.graphics = False
+    print("NOTE: this System Modeler version does not support --graphics; running "
+          "without it, so the graphic annotations are NOT checked.", file=sys.stderr)
+
+
 def build_mos(mode, model_path, name, msl_files, call=None, extra_loads=None,
               graphics=False, figures=False):
     lines = []
@@ -1513,6 +1526,7 @@ def main():
               "only); it is interpolated into the generated .mos script." % args.name,
               file=sys.stderr)
         return 2
+    _drop_unsupported_graphics_check(args, version)
 
     # A class that already lives in MSL or in a --load-library library needs no
     # file of its own: with no --model, the run works in the current directory and

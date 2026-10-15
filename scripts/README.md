@@ -144,7 +144,7 @@ Key options:
 | `--load PATH` | extra `.mo` to load before the model (repeatable; e.g. a library's `package.mo` on disk) |
 | `--load-library NAME[==VER]` | locate an **installed** non-MSL library by name and load it before the model (repeatable; e.g. `Hydraulic`). Searches bundled, user-installed and Model-Center custom paths; override with `$WSM_LIBRARY_<NAME>` |
 | `--library NAME` / `--library-version VER` | `libraries` mode: resolve just this one library and print its package path |
-| `--graphics` | evaluate the graphic annotations (`Icon`, `Diagram`, `Placement`) instead of carrying them along untouched, so an error inside one is reported. The compiling modes also generate the model's diagram view, which evaluates the `DynamicSelect` expressions; the launcher prints a `graphics :` line and exits non-zero if that view was not produced, or if an animated value falls back to its static value |
+| `--graphics` | evaluate the graphic annotations (`Icon`, `Diagram`, `Placement`) instead of carrying them along untouched, so an error inside one is reported. The compiling modes also generate the model's diagram view, which evaluates the `DynamicSelect` expressions; the launcher prints a `graphics :` line and exits non-zero if that view was not produced, or if an animated value falls back to its static value. On a kernel that does not support it, the run goes ahead without it and prints a `NOTE:` |
 | `--figures` | also parse the class's `Documentation(figures)` annotation as System Modeler does; the launcher prints a `figures  :` line and exits non-zero, listing each part it would ignore |
 | `--tempdir DIR` | working dir (default `<model-dir>/_wsm_<mode>_temp`) |
 | `--wsm-home PATH` | install root override |
