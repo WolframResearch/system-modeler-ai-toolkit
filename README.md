@@ -118,7 +118,7 @@ its sources where it looked things up.
 
 **Developer Discussions: Agentic Skills** is a five-part video series in which
 System Modeler developers Ankit Naik and Leonardo Laguna Ruiz use these skills
-with Claude Code, unscripted.
+with Claude Code.
 
 | Session | Topic |
 |---|---|
