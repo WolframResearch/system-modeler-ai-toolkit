@@ -112,6 +112,23 @@ its sources where it looked things up.
 > what each skill needs? It's all in [`InstallationGuide.md`](InstallationGuide.md)—a
 > guide your AI assistant reads to do the setup, not a manual you work through.
 
+## Videos
+
+**Developer Discussions: Agentic Skills** is a five-part video series in which
+System Modeler developers Ankit Naik and Leonardo Laguna Ruiz use these skills
+with Claude Code, unscripted.
+
+| Session | Topic |
+|---|---|
+| 1 | [Building models: four models in four domains](https://www.youtube.com/watch?v=wXld8l1mdIg&t=8s) |
+| 2 | Analyzing models with the Wolfram MCP server (coming soon) |
+| 3 | Connecting models to real-world applications (coming soon) |
+| 4 | Debugging slow models (coming soon) |
+| 5 | Sharing models through FMI (coming soon) |
+
+Questions, suggestions and your own results are welcome in the
+[discussion on Wolfram Community](https://community.wolfram.com/t/youtube-series-developer-discussions-five-sessions-on-ai-agents-and-wolfram-system-modeler/28426).
+
 ## License
 
 This product incorporates portions of the Modelica® Language Specification.
