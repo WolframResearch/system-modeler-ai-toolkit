@@ -114,6 +114,8 @@ its sources where it looked things up.
 
 ## Videos
 
+<a href="https://community.wolfram.com/t/youtube-series-developer-discussions-five-sessions-on-ai-agents-and-wolfram-system-modeler/28426"><img src="media/developer-discussions.jpg" alt="Developer Discussions: Agentic Skills, a five-part video series with Ankit Naik and Leonardo Laguna" width="640"></a>
+
 **Developer Discussions: Agentic Skills** is a five-part video series in which
 System Modeler developers Ankit Naik and Leonardo Laguna Ruiz use these skills
 with Claude Code, unscripted.
