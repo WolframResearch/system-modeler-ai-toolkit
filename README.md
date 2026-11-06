@@ -114,19 +114,20 @@ its sources where it looked things up.
 
 ## Videos
 
-<a href="https://community.wolfram.com/t/youtube-series-developer-discussions-five-sessions-on-ai-agents-and-wolfram-system-modeler/28426"><img src="media/developer-discussions.jpg" alt="Developer Discussions: Agentic Skills, a five-part video series with Ankit Naik and Leonardo Laguna" width="640"></a>
+<a href="https://www.youtube.com/playlist?list=PLDoLu2s-YHDY"><img src="media/developer-discussions.jpg" alt="Developer Discussions: Agentic Skills, a five-part video series with Ankit Naik and Leonardo Laguna" width="640"></a>
 
 **Developer Discussions: Agentic Skills** is a five-part video series in which
 System Modeler developers Ankit Naik and Leonardo Laguna Ruiz use these skills
-with Claude Code.
+with Claude Code. Watch the
+[full playlist on YouTube](https://www.youtube.com/playlist?list=PLDoLu2s-YHDY).
 
 | Session | Topic |
 |---|---|
-| 1 | [Building models: four models in four domains](https://www.youtube.com/watch?v=wXld8l1mdIg&t=8s) |
-| 2 | Analyzing models with the Wolfram MCP server (coming soon) |
-| 3 | Connecting models to real-world applications (coming soon) |
-| 4 | Debugging slow models (coming soon) |
-| 5 | Sharing models through FMI (coming soon) |
+| 1 | [Building models: four models in four domains](https://www.youtube.com/watch?v=wXld8l1mdIg&list=PLDoLu2s-YHDY) |
+| 2 | [Analyzing models with the Wolfram MCP server: a gyroscopic monorail](https://www.youtube.com/watch?v=7eHo4IM1q3o&list=PLDoLu2s-YHDY) |
+| 3 | [Connecting models to real-world applications](https://www.youtube.com/watch?v=eKq9EdMeBgs&list=PLDoLu2s-YHDY) |
+| 4 | [Debugging slow models](https://www.youtube.com/watch?v=UR0YabxpYJQ&list=PLDoLu2s-YHDY) |
+| 5 | [Sharing models through FMI](https://www.youtube.com/watch?v=O78MzUSZeVA&list=PLDoLu2s-YHDY) |
 
 Questions, suggestions and your own results are welcome in the
 [discussion on Wolfram Community](https://community.wolfram.com/t/youtube-series-developer-discussions-five-sessions-on-ai-agents-and-wolfram-system-modeler/28426).
