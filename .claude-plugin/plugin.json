@@ -1,0 +1,14 @@
+{
+  "name": "system-modeler-skills",
+  "version": "1.0.0",
+  "description": "Agent skills for Wolfram System Modeler and Modelica: create, validate, simulate, plot, diagnose, annotate and document models, with the bundled Modelica and System Modeler documentation for reference.",
+  "author": {
+    "name": "Wolfram Research",
+    "url": "https://www.wolfram.com"
+  },
+  "homepage": "https://www.wolfram.com/system-modeler/",
+  "repository": "https://github.com/WolframResearch/system-modeler-ai-toolkit",
+  "license": "MIT",
+  "keywords": ["modelica", "system-modeler", "wolfram", "simulation", "modeling"],
+  "skills": ["./"]
+}
