@@ -69,6 +69,10 @@ flowchart LR
     D -. repeat any time .-> B
 ```
 
+The skills run on your machine, against your own System Modeler and Wolfram
+Language installation. The one download is a set of Python packages from PyPI,
+fetched the first time a plotting or analysis script runs.
+
 ## Get started
 
 | Your assistant | Route |
