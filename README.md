@@ -77,7 +77,7 @@ fetched the first time a plotting or analysis script runs.
 
 | Your assistant | Route |
 |---|---|
-| Claude Code or Claude Desktop | [Install the plugin](#claude-code-and-claude-desktop) |
+| Claude Code | [Install the plugin](#claude-code) |
 | Codex or any other assistant | [Use the folder](#codex-and-other-assistants) |
 
 The assistant sets the skills up for your environment and checks the
@@ -88,9 +88,9 @@ via the
 [Wolfram Local MCP](https://www.wolfram.com/artificial-intelligence/mcp/local/);
 and Python 3 for scripting.
 
-### Claude Code and Claude Desktop
+### Claude Code
 
-1. In a Claude Code or Claude Desktop session, run:
+1. In a Claude Code session, run:
    ```
    /plugin marketplace add WolframResearch/system-modeler-ai-toolkit
    ```

@@ -4,12 +4,11 @@
 asked you to install these skills. Follow this guide to set them up, then tell
 the user they're ready and suggest a test.**
 
-> **Installed as a Claude plugin (Claude Code or Claude Desktop)?** The skills
-> are already installed. Do **not** run `install.sh` or `install.ps1`; that
-> would install every skill a second time. Skip Steps 1 and 3. Do Step 2
-> (Python 3), Step 4 (requirements) and Step 5 (verify), running the commands
-> from the folder that contains this file. Report what is missing and install
-> nothing without asking.
+> **Installed as a Claude Code plugin?** The skills are already installed. Do
+> **not** run `install.sh` or `install.ps1`; that would install every skill a
+> second time. Skip Steps 1 and 3. Do Step 2 (Python 3), Step 4 (requirements)
+> and Step 5 (verify), running the commands from the folder that contains this
+> file. Report what is missing and install nothing without asking.
 
 This bundle is a set of **agent skills** for Wolfram System Modeler and Modelica.
 Each skill is a plain-Markdown `SKILL.md` (instructions for you) plus, for most,
