@@ -88,6 +88,36 @@ def resolve_corpora(name: str) -> tuple[str, ...]:
     return ALIASES[key]
 
 
+def _read_corpus(corpus):
+    """Load ``<corpus>.json``, or merge ``<corpus>.part1.json``, ``.part2.json``, ...
+
+    Large corpora are split into parts to keep each file under upload size
+    limits; parts are merged in numeric order so document order is unchanged.
+    """
+    single = os.path.join(DATA_DIR, f"{corpus}.json")
+    if os.path.exists(single):
+        paths = [single]
+    else:
+        prefix = f"{corpus}.part"
+        nums = sorted(
+            int(name[len(prefix):-5])
+            for name in os.listdir(DATA_DIR)
+            if name.startswith(prefix) and name.endswith(".json")
+            and name[len(prefix):-5].isdigit()
+        )
+        paths = [os.path.join(DATA_DIR, f"{prefix}{n}.json") for n in nums]
+        if not paths:
+            raise FileNotFoundError(
+                f"no data for corpus '{corpus}': expected {corpus}.json "
+                f"or {corpus}.part1.json, ... in {DATA_DIR}"
+            )
+    data = {}
+    for path in paths:
+        with open(path, encoding="utf-8") as fh:
+            data.update(json.load(fh))
+    return data
+
+
 class Index:
     def __init__(self, corpora=CORPORA):
         self.docs = []          # list of {id, corpus, url, title, text, len}
@@ -101,9 +131,7 @@ class Index:
 
     def _load(self, corpora):
         for corpus in corpora:
-            path = os.path.join(DATA_DIR, f"{corpus}.json")
-            with open(path, encoding="utf-8") as fh:
-                data = json.load(fh)
+            data = _read_corpus(corpus)
             for url, text in data.items():
                 title = text.lstrip().split("\n", 1)[0].lstrip("# ").strip()
                 parts = msl_parts(url) if corpus == "msl" else None

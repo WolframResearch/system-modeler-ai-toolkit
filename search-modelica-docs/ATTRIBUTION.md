@@ -1,7 +1,7 @@
 # Attribution and licensing of bundled documentation
 
 This skill bundles three prebuilt documentation corpora under
-`docsearch/data/` (`spec.json`, `docs.json`, and `msl.json`). Their provenance
+`docsearch/data/` (`spec.json`, `docs.json`, and `msl.part*.json`). Their provenance
 and licensing differ, so they are described separately below.
 
 ## Modelica Language Specification (`spec.json`)
@@ -43,7 +43,7 @@ keyed by its source URL, for offline BM25 search. The excerpts remain
 © Wolfram Research, Inc.; when quoting them, cite the source URL on
 <https://reference.wolfram.com>.
 
-## Modelica Standard Library reference (`msl.json`)
+## Modelica Standard Library reference (`msl.part1.json`, `msl.part2.json`)
 
 - **Title:** Modelica Standard Library (MSL), version 4.0.0
 - **Author / publisher:** Modelica Association and contributors
@@ -52,7 +52,7 @@ keyed by its source URL, for offline BM25 search. The excerpts remain
 - **License:** BSD 3-Clause —
   <https://github.com/modelica/ModelicaStandardLibrary/blob/master/LICENSE>
 
-`msl.json` contains the embedded class documentation and source code of the
+`msl.part1.json` and `msl.part2.json` (one corpus, split in two for file-size limits) contain the embedded class documentation and source code of the
 Modelica Standard Library (the `Modelica` package and the accompanying
 `ModelicaReference` library from the same MSL 4.0.0 distribution), one
 retrieval chunk per class. **Changes were made:** HTML documentation was

@@ -168,7 +168,7 @@ documentation bundled with `search-modelica-docs`:
   by the Modelica Association under
   [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) and
   distributed here under the same license
-- **Modelica Standard Library** reference (`docsearch/data/msl.json`)—©
+- **Modelica Standard Library** reference (`docsearch/data/msl.part1.json` + `msl.part2.json`)—©
   Modelica Association and contributors, under the
   [BSD 3-Clause License](https://github.com/modelica/ModelicaStandardLibrary/blob/master/LICENSE)
 - **Wolfram System Modeler documentation** excerpts (`docsearch/data/docs.json`)—©
