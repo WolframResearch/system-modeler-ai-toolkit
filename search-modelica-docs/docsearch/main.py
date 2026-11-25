@@ -98,14 +98,33 @@ def cmd_show(args):
     idx = Index()
     doc = idx.get(args.show)
     if doc is None:
-        print(f"No chunk with url: {args.show}")
-        return
+        matches = idx.find_class(args.show)
+        if len(matches) == 1:
+            doc = matches[0]
+        elif matches:
+            print(f"{len(matches)} MSL classes are named {args.show.rsplit('.', 1)[-1]}; "
+                  "show one by its url:")
+            for d in matches:
+                print(f"  {d['url']}")
+                print(f"      {_summary(d['text'])}")
+            return
+        else:
+            print(f"No chunk with url or MSL class name: {args.show}")
+            return
     pre = _preambles([doc["corpus"]]).get(doc["corpus"])
     if pre:
         print(f"=== {CORPUS_LABEL.get(doc['corpus'], doc['corpus'])} ===")
         print(pre)
         print()
     print(doc["text"])
+
+
+def _summary(text):
+    """The class declaration line of an MSL entry, which tells same-named classes apart."""
+    for line in text.split("Code:", 1)[-1].splitlines():
+        if line.strip():
+            return line.strip()
+    return ""
 
 
 def cmd_corpora(args):
@@ -183,7 +202,7 @@ def build_parser():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--query", help="natural-language search query")
-    p.add_argument("--show", help="print the full chunk for an exact url")
+    p.add_argument("--show", help="print the full chunk for an exact url, or an MSL class name")
     p.add_argument("--corpora", action="store_true", help="list corpora and aliases")
     p.add_argument("--eval", action="store_true", help="run recall@k against gold sets")
     p.add_argument("--corpus", default="all",

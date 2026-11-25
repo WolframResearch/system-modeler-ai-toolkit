@@ -438,8 +438,10 @@ def main():
         tempdir = args.tempdir
         exe, sim = find_build(args.tempdir)
     elif args.model and args.name:
-        tempdir = args.tempdir or os.path.join(
-            os.path.dirname(os.path.abspath(args.model)), "_wsm_diagnose_temp")
+        target = launcher().resolve_model_target(args.model)
+        if target is None:
+            sys.exit("ERROR: model not found: %s" % args.model)
+        tempdir = args.tempdir or os.path.join(target[2], "_wsm_diagnose_temp")
         if not os.path.isdir(tempdir):
             os.makedirs(tempdir)
         extra = []

@@ -68,6 +68,13 @@ python -m docsearch.main --query "anti-windup PID controller output limits" --co
 python -m docsearch.main --show "https://specification.modelica.org/maint/3.6/statements-and-algorithm-sections.html#4gfvu7z5m8rutn1wqr3gsd7mr"
 python -m docsearch.main --show "modelica://Modelica.Blocks/LimPID"
 
+# Or an MSL class by name, leaf or dotted. A dotted name narrows the match only
+# to its top-level package (Modelica.Mechanics), so classes that share a leaf
+# name there, such as the Rotational and Translational Brake, are listed with
+# their declaration lines; pick one by url.
+python -m docsearch.main --show "LimPID"
+python -m docsearch.main --show "Brake"
+
 # Machine-readable output for programmatic use.
 python -m docsearch.main --query "array construction" --json
 
@@ -76,7 +83,13 @@ python -m docsearch.main --corpora
 ```
 
 Flags: `--corpus` (route, default `all`), `--k` (results, default 5), `--full`
-(print whole chunks instead of 600-char previews), `--json`, `--show <url>`.
+(print whole chunks instead of 600-char previews), `--json`, `--show <url or
+MSL class name>`.
+
+MSL entries are keyed by top-level package and class name only
+(`modelica://Modelica.Mechanics/Brake-3`), not by the full dotted path. In a
+`--corpus msl` search, a CamelCase or dotted class name in the query
+(`ComplexConstant`, `Modelica.Blocks.Sources.Sine`) puts that class first.
 
 ## Workflow
 
@@ -100,7 +113,9 @@ Flags: `--corpus` (route, default `all`), `--k` (results, default 5), `--full`
      © Wolfram Research — cite the `reference.wolfram.com` source URL.
    - **MSL reference (`msl`)** entries are class docs plus annotation-stripped
      MSL 4.0 source. The code is authoritative for parameter names, defaults,
-     and `connect()` wiring. Entries are keyed by *leaf* class name as
+     and `connect()` wiring. The toolchain may ship a newer, backward-compatible
+     4.x MSL; take the version for `uses(Modelica(version=...))` from
+     `wsm_run.py --mode info`, not from this corpus. Entries are keyed by *leaf* class name as
      `modelica://<TopPackage>/<Name>` pseudo-URLs — cite the class name (e.g.
      `Modelica.Blocks.Continuous.LimPID` if the doc text gives the full path),
      not the pseudo-URL, since it is not a resolvable link.

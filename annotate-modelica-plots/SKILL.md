@@ -165,11 +165,11 @@ their request and skip to step 4.
 # simulate to produce a .mat (and, beside it, a .sim init file with the same stem)
 python3 "<scripts-dir>/wsm_run.py" --mode simulate --model "<Model.mo>" --name "<Package.Model>" --timeout 180
 # enumerate result variables (write working files next to the model, not into the skill dir)
-python3 "<scripts-dir>/plot_mat.py" "<Model-dir>/_wsm_simulate_temp/<result>.mat" --list > "<Model-dir>/vars.txt"
+python3 "<scripts-dir>/plot_mat.py" "<temp-dir>/<result>.mat" --list > "<Model-dir>/vars.txt"
 # get a starting spec (filters time/der/aux; one plot, x=time). Pass the .sim so protected
 # variables are dropped — they are stored in the .mat but render blank in a stored figure.
 python3 -m PlotAnnotate.main --file "<Model.mo>" --vars-file "<Model-dir>/vars.txt" \
-  --sim-file "<Model-dir>/_wsm_simulate_temp/<result>.sim" --suggest --max-curves 8 > "<Model-dir>/figs.json"
+  --sim-file "<temp-dir>/<result>.sim" --suggest --max-curves 8 > "<Model-dir>/figs.json"
 ```
 
 `<result>.mat` is the file named by `simulation.resultFile` in `simulate.out.json`; the `.sim`
@@ -218,7 +218,7 @@ add the markers to a figure of the spec. Each feature is `VAR:KIND[:ARG]`:
 | `s:final`, `s:initial` | horizontal line at the final / initial value |
 
 ```bash
-python3 "<scripts-dir>/mat_features.py" "<Model-dir>/_wsm_simulate_temp/<result>.mat" s:min s:settle:0.02 \
+python3 "<scripts-dir>/mat_features.py" "<temp-dir>/<result>.mat" s:min s:settle:0.02 \
   --spec "<Model-dir>/figs.json" --figure response --plots states
 ```
 
@@ -235,7 +235,7 @@ python3 -m PlotAnnotate.main --file "<Model.mo>" --class "<Model>" --spec "<Mode
 ```
 
 Shows the unified diff without writing. `--vars-file "<Model-dir>/vars.txt"` adds membership warnings,
-and `--sim-file "<Model-dir>/_wsm_simulate_temp/<result>.sim"` warns on any curve that references a
+and `--sim-file "<temp-dir>/<result>.sim"` warns on any curve that references a
 protected variable. `--force` regenerates over an existing `figures` block.
 
 ### 5. Apply — write in place
@@ -255,7 +255,7 @@ figures. `--figures` has the kernel parse them as System Modeler does when it op
 python3 "<scripts-dir>/wsm_run.py" --mode validate --figures --model "<Model.mo>" --name "<Package.Model>" --timeout 90
 ```
 
-Parse `_wsm_validate_temp/validate.out.json` (a JSON array — take `[0]`; field reference:
+Parse `<temp-dir>/validate.out.json` (a JSON array — take `[0]`; field reference:
 [Appendix → Reading the JSON output](#reading-the-json-output)) and check
 `status.flatten == "Pass"`. If it passed before annotating but fails after, that's a bug in the
 annotation, not the user's model — report it. The launcher also prints a `figures  :` line and
@@ -341,7 +341,8 @@ order and use the first that exists:
 2. `../scripts` relative to the skill directory — in a normal install
    `../scripts/wsm_run.py` already exists, so use that path directly; **do not run
    a shell probe to "resolve" it.**
-3. The repo checkout you installed from, e.g. `.../agentskills/scripts`.
+3. The folder you cloned or unzipped the skills from, e.g.
+   `.../system-modeler-ai-toolkit/scripts`.
 4. Last resort, search the home directory:
    - PowerShell: `Get-ChildItem $HOME -Recurse -Filter wsm_run.py -ErrorAction SilentlyContinue | Select-Object -First 1`
    - bash/zsh: `find ~ -name wsm_run.py -path '*scripts*' 2>/dev/null | head -1`
@@ -444,17 +445,20 @@ Steps 2, 4 and 5, and do not run the installer.
 
 ### Temporary directories
 
-The launcher works in a `_wsm_<mode>_temp/` directory next to the `.mo` file
+The launcher works in a `_wsm_<mode>_temp/` directory
 (`_wsm_validate_temp/`, `_wsm_simulate_temp/`, `_wsm_diagnose_temp/`) and leaves
-its outputs there. Tell the user, e.g.: "Working in temporary directory
-`_wsm_<mode>_temp/`. This will be deleted afterwards." Pass `--tempdir`
+its outputs there. It sits next to a single `.mo` file, or next to the top folder
+of a directory-form library, never inside the library. The launcher prints its
+path as `temp dir :`; `<temp-dir>` in the skills means that path. Tell the user,
+e.g.: "Working in temporary directory `_wsm_<mode>_temp/`. This will be deleted
+afterwards." Pass `--tempdir`
 to reuse one directory across models in a session.
 
 Clean up by removing the whole directory — use the user's shell:
 
 ```bash
-rm -rf "<model-dir>/_wsm_<mode>_temp"          # macOS / Linux
-# PowerShell: Remove-Item -Recurse -Force "<model-dir>\_wsm_<mode>_temp"
+rm -rf "<temp-dir>"          # macOS / Linux
+# PowerShell: Remove-Item -Recurse -Force "<temp-dir>"
 ```
 
 ### Picking the model name
@@ -557,9 +561,10 @@ This toolchain ships **MSL 4.x**. When authoring models, use the 4.x names — t
 
 - units: `Modelica.Units.SI.*` (not `Modelica.SIunits.*`)
 - source frequency parameter: `f` (not `freqHz`), e.g. `SineVoltage(V=.., f=..)`
-- declare the dependency as `annotation(uses(Modelica(version="4.0.0")))`
+- declare the dependency with the exact MSL version, e.g.
+  `annotation(uses(Modelica(version="4.1.0")))`
 
-Run `python3 "<scripts-dir>/wsm_run.py" --mode info` to confirm the exact MSL
+Run `python3 "<scripts-dir>/wsm_run.py" --mode info` to get the exact MSL
 version. `wsm_run.py` also warns on stderr if it spots a 3.2 name in the model.
 
 **When a flatten fails with `Element not found ... in Modelica...`**, the MSL

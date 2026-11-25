@@ -36,7 +36,8 @@ Common options:
                             Placement) instead of carrying them along untouched
     --figures               also parse the class's Documentation(figures) annotation and
                             fail on any part System Modeler would ignore
-    --tempdir DIR           working dir (default: <model-dir>/_wsm_<mode>_temp)
+    --tempdir DIR           working dir (default: _wsm_<mode>_temp next to the
+                            .mo file, or next to a directory-form library)
     --wsm-home PATH         install root override
     --debug                 diagnose: also emit compiler per-stage dumps + exec stats
     --kernel-arg ARG        advanced raw kernel flag, repeatable (prefer --debug)
@@ -643,7 +644,9 @@ def resolve_model_target(model_arg):
       * load_path  : the .mo to loadFile (a directory-form library's top package.mo,
                      or a single-file model as given).
       * scan_paths : .mo files to scan for MSL auto-detection / dialect warnings.
-      * temp_base  : directory to place the _wsm_<mode>_temp dir in.
+      * temp_base  : directory to place the _wsm_<mode>_temp dir in: next to a
+                     single .mo file, or next to the top folder of a directory-form
+                     library, so the library itself never gets a stray folder.
       * kind       : "package" or "single" (for user messaging).
 
     A --model that points at a directory, at a package.mo, or at a class file that
@@ -656,11 +659,12 @@ def resolve_model_target(model_arg):
             return None
         root = _library_root_for(pkg) or pkg
         root_dir = os.path.dirname(root)
-        return (root, _mo_tree(root_dir), root_dir, "package")
+        return (root, _mo_tree(root_dir), os.path.dirname(root_dir), "package")
     if os.path.isfile(ap):
         root = _library_root_for(ap)
         if root:
-            return (root, _mo_tree(os.path.dirname(root)), os.path.dirname(ap), "package")
+            root_dir = os.path.dirname(root)
+            return (root, _mo_tree(root_dir), os.path.dirname(root_dir), "package")
         return (ap, [ap], os.path.dirname(ap), "single")
     return None
 
@@ -1333,7 +1337,8 @@ def main():
                          "library folder or any class file inside it — the whole package "
                          "is loaded and you pass the full dotted name via --name.")
     ap.add_argument("--name", help="Model/package name to test")
-    ap.add_argument("--tempdir", help="Working directory (default <model-dir>/_wsm_<mode>_temp)")
+    ap.add_argument("--tempdir", help="Working directory (default _wsm_<mode>_temp next to the .mo "
+                         "file, or next to a directory-form library)")
     ap.add_argument("--msl", choices=["auto", "yes", "no"], default="auto")
     ap.add_argument("--msl-version", help="Force MSL version, e.g. 4.1.0")
     ap.add_argument("--wsm-home", help="Install root override")

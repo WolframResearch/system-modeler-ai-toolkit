@@ -187,11 +187,11 @@ python3 "<scripts-dir>/wsm_run.py" --mode validate --graphics \
 that does not resolve passes unnoticed
 ([Appendix → Checking graphic annotations](#checking-graphic-annotations)).
 
-Parse `_wsm_validate_temp/validate.out.json` (a JSON array — take the first element; field
+Parse `<temp-dir>/validate.out.json` (a JSON array — take the first element; field
 reference: [Appendix → Reading the JSON output](#reading-the-json-output))
 and check `status.flatten == "Pass"`. A Pass confirms the edits didn't corrupt the source. If it
 Fails after annotating but passed before, report it — that's a bug, not the user's model. Then
-remove the temp dir (`rm -rf "<Model-dir>/_wsm_validate_temp"`).
+remove the temp dir (`rm -rf "<temp-dir>"`).
 
 When references were split, each extra reference adds its own connector (two variables) and two
 equations to the flattened model — the same solution, written out more times. If the user wants
@@ -367,7 +367,8 @@ order and use the first that exists:
 2. `../scripts` relative to the skill directory — in a normal install
    `../scripts/wsm_run.py` already exists, so use that path directly; **do not run
    a shell probe to "resolve" it.**
-3. The repo checkout you installed from, e.g. `.../agentskills/scripts`.
+3. The folder you cloned or unzipped the skills from, e.g.
+   `.../system-modeler-ai-toolkit/scripts`.
 4. Last resort, search the home directory:
    - PowerShell: `Get-ChildItem $HOME -Recurse -Filter wsm_run.py -ErrorAction SilentlyContinue | Select-Object -First 1`
    - bash/zsh: `find ~ -name wsm_run.py -path '*scripts*' 2>/dev/null | head -1`
@@ -470,17 +471,20 @@ Steps 2, 4 and 5, and do not run the installer.
 
 ### Temporary directories
 
-The launcher works in a `_wsm_<mode>_temp/` directory next to the `.mo` file
+The launcher works in a `_wsm_<mode>_temp/` directory
 (`_wsm_validate_temp/`, `_wsm_simulate_temp/`, `_wsm_diagnose_temp/`) and leaves
-its outputs there. Tell the user, e.g.: "Working in temporary directory
-`_wsm_<mode>_temp/`. This will be deleted afterwards." Pass `--tempdir`
+its outputs there. It sits next to a single `.mo` file, or next to the top folder
+of a directory-form library, never inside the library. The launcher prints its
+path as `temp dir :`; `<temp-dir>` in the skills means that path. Tell the user,
+e.g.: "Working in temporary directory `_wsm_<mode>_temp/`. This will be deleted
+afterwards." Pass `--tempdir`
 to reuse one directory across models in a session.
 
 Clean up by removing the whole directory — use the user's shell:
 
 ```bash
-rm -rf "<model-dir>/_wsm_<mode>_temp"          # macOS / Linux
-# PowerShell: Remove-Item -Recurse -Force "<model-dir>\_wsm_<mode>_temp"
+rm -rf "<temp-dir>"          # macOS / Linux
+# PowerShell: Remove-Item -Recurse -Force "<temp-dir>"
 ```
 
 ### Picking the model name
@@ -583,9 +587,10 @@ This toolchain ships **MSL 4.x**. When authoring models, use the 4.x names — t
 
 - units: `Modelica.Units.SI.*` (not `Modelica.SIunits.*`)
 - source frequency parameter: `f` (not `freqHz`), e.g. `SineVoltage(V=.., f=..)`
-- declare the dependency as `annotation(uses(Modelica(version="4.0.0")))`
+- declare the dependency with the exact MSL version, e.g.
+  `annotation(uses(Modelica(version="4.1.0")))`
 
-Run `python3 "<scripts-dir>/wsm_run.py" --mode info` to confirm the exact MSL
+Run `python3 "<scripts-dir>/wsm_run.py" --mode info` to get the exact MSL
 version. `wsm_run.py` also warns on stderr if it spots a 3.2 name in the model.
 
 **When a flatten fails with `Element not found ... in Modelica...`**, the MSL

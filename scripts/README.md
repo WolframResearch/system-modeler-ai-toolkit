@@ -146,7 +146,7 @@ Key options:
 | `--library NAME` / `--library-version VER` | `libraries` mode: resolve just this one library and print its package path |
 | `--graphics` | evaluate the graphic annotations (`Icon`, `Diagram`, `Placement`) instead of carrying them along untouched, so an error inside one is reported. The compiling modes also generate the model's diagram view, which evaluates the `DynamicSelect` expressions; the launcher prints a `graphics :` line and exits non-zero if that view was not produced, or if an animated value falls back to its static value. On a kernel that does not support it, the run goes ahead without it and prints a `NOTE:` |
 | `--figures` | also parse the class's `Documentation(figures)` annotation as System Modeler does; the launcher prints a `figures  :` line and exits non-zero, listing each part it would ignore |
-| `--tempdir DIR` | working dir (default `<model-dir>/_wsm_<mode>_temp`) |
+| `--tempdir DIR` | working dir (default `_wsm_<mode>_temp` next to the `.mo` file, or next to a directory-form library) |
 | `--wsm-home PATH` | install root override |
 | `--vsdevcmd PATH` | Windows: path to `VsDevCmd.bat` |
 | `--arch ARCH` | Windows VS arch (default `amd64`; or set `$WSM_ARCH`) |

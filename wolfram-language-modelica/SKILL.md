@@ -284,6 +284,21 @@ anomalyScores = detector[Transpose[series[[2]]], "RarerProbability"];
   ];
   ```
 
+- **`"ParameterNames"` of a `SystemModel` are `QuantityVariable` objects.** Take `First /@ model["ParameterNames"]` to get
+  the name strings before filtering them.
+- **`SystemModelParametricSimulate` can hang on some models.** The signature is
+  `pf = SystemModelParametricSimulate[model, vars, {tmin, tmax}, {p1, p2, …}]`,
+  then `pf[v1, v2, …]` runs one simulation. On some models the first call never
+  returns even though `SystemModelSimulate` of the same run takes seconds. Wrap
+  the first call in `TimeConstrained[pf[…], 60]`; if it times out, loop
+  `SystemModelSimulate` with `"ParameterValues"` instead, or pass the list of
+  values in one `SystemModelSimulate` call (see *Parameter sweeps*).
+- **The Wolfram Language may use a different System Modeler version.** It builds
+  models with the System Modeler kernel that ships with it, which can be older
+  or newer than the installed System Modeler application used by the other
+  skills. A model one version accepts can fail in the other — e.g. a unit string
+  such as `"Pa.m(1/2)"`. When results go through both, validate the model with
+  both, and say in the report which version produced which result.
 - **Variable name mismatches.** Modelica uses dots: `pipe1.port_a.p`. Protected / mangled names can appear. Always run `sim["VariableNames"]` when in doubt instead of guessing.
 - **`.mat` files from a kernel simulation aren't readable via `sim[...]` directly.** Those come from the WSM kernel simulation. To read them in WL, load via `SystemModelSimulationData[path]` — and even then, the file path must still exist. Prefer going through `SystemModelSimulate` end-to-end when you need data in WL.
 - **Load `` WSMLink` `` in its own evaluation, before any code that uses it.**
@@ -339,7 +354,9 @@ positionally leaves the call unevaluated.
 
 Names in `"ParameterValues"` must match the model's parameters exactly, or the
 call fails with `SystemModelValidate::pvf` ("not among the expected ones").
-When unsure, list them first with `model["ParameterNames"]`.
+When unsure, list them first with `First /@ model["ParameterNames"]` — the
+property returns `QuantityVariable[name, …]` objects, not strings, so string
+functions (`StringContainsQ`, `StringStartsQ`) need the `First /@`.
 
 `Method -> {"InterpolationPoints" -> n}` evaluates the requirement on an
 `n`-point time grid — reported failure times snap to grid points, and fewer

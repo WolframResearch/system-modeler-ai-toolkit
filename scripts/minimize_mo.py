@@ -660,7 +660,8 @@ def main():
                     help="candidates run in parallel")
     ap.add_argument("--budget", type=int, default=1800, help="total time limit in seconds")
     ap.add_argument("--timeout", type=int, default=300, help="time limit of one kernel run in seconds")
-    ap.add_argument("--tempdir", help="work directory (default <model-dir>/_wsm_minimize_temp)")
+    ap.add_argument("--tempdir", help="work directory (default _wsm_minimize_temp next to the model "
+                    "or its library)")
     ap.add_argument("--msl", default="auto", choices=("auto", "yes", "no"))
     ap.add_argument("--wsm-home")
     ap.add_argument("--load-library", action="append", default=[], metavar="NAME[==VER]")
@@ -669,7 +670,7 @@ def main():
     args = ap.parse_args()
 
     text, eol, file_name = load_model(args.model)
-    base_dir = os.path.dirname(os.path.abspath(args.model.rstrip("/\\")))
+    base_dir = wsm_run.resolve_model_target(args.model)[2]
     tempdir = os.path.abspath(args.tempdir or os.path.join(base_dir, "_wsm_minimize_temp"))
     created = claim_tempdir(tempdir)
     workdir = os.path.join(tempdir, "runs")

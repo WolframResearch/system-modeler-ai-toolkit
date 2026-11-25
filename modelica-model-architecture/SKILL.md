@@ -27,6 +27,9 @@ exception in section 5.
   (e.g. authoring `GettingStarted`/`Introduction`, storing example result plots,
   adding icons, how far to decompose). One-shot suppresses the questions, not the
   decisions; surfacing the defaults up front lets the user veto before you build.
+- When nobody can approve — a non-interactive run, a task handed to you by another
+  agent, or a request that says to go ahead — take the one-shot path: state the
+  plan and the choices up front, then build without waiting.
 - When creating a library, recommend a **parallel test library** from the start.
   Add a unit test for each component as you build it — not at the end.
 - **Never delete the user's model files to "start clean."** When the toolchain
@@ -195,7 +198,8 @@ labels (note a `displayUnit` default needs a literal value).
 Use the **MSL 4.x** names — this toolchain ships MSL 4.x, and the old 3.2 names
 flatten with confusing "not found" errors. Write `Modelica.Units.SI.*` (not
 `Modelica.SIunits.*`), and source frequency is `f=` (not `freqHz=`). Declare the
-dependency as `annotation(uses(Modelica(version = "4.1.0")))`.
+dependency with the MSL version the toolchain reports, e.g.
+`annotation(uses(Modelica(version = "4.1.0")))`.
 
 ## 8. Conventions
 
@@ -383,6 +387,8 @@ hold:
   table (section 5).
 
 Treat this as a checklist to run through and report against, not a list to skim.
+If an item is left open — for example the user only wants an answer, not a finished
+library — say which ones in the final report instead of reporting the library as done.
 
 ---
 
@@ -427,7 +433,8 @@ order and use the first that exists:
 2. `../scripts` relative to the skill directory — in a normal install
    `../scripts/wsm_run.py` already exists, so use that path directly; **do not run
    a shell probe to "resolve" it.**
-3. The repo checkout you installed from, e.g. `.../agentskills/scripts`.
+3. The folder you cloned or unzipped the skills from, e.g.
+   `.../system-modeler-ai-toolkit/scripts`.
 4. Last resort, search the home directory:
    - PowerShell: `Get-ChildItem $HOME -Recurse -Filter wsm_run.py -ErrorAction SilentlyContinue | Select-Object -First 1`
    - bash/zsh: `find ~ -name wsm_run.py -path '*scripts*' 2>/dev/null | head -1`
@@ -530,17 +537,20 @@ Steps 2, 4 and 5, and do not run the installer.
 
 ### Temporary directories
 
-The launcher works in a `_wsm_<mode>_temp/` directory next to the `.mo` file
+The launcher works in a `_wsm_<mode>_temp/` directory
 (`_wsm_validate_temp/`, `_wsm_simulate_temp/`, `_wsm_diagnose_temp/`) and leaves
-its outputs there. Tell the user, e.g.: "Working in temporary directory
-`_wsm_<mode>_temp/`. This will be deleted afterwards." Pass `--tempdir`
+its outputs there. It sits next to a single `.mo` file, or next to the top folder
+of a directory-form library, never inside the library. The launcher prints its
+path as `temp dir :`; `<temp-dir>` in the skills means that path. Tell the user,
+e.g.: "Working in temporary directory `_wsm_<mode>_temp/`. This will be deleted
+afterwards." Pass `--tempdir`
 to reuse one directory across models in a session.
 
 Clean up by removing the whole directory — use the user's shell:
 
 ```bash
-rm -rf "<model-dir>/_wsm_<mode>_temp"          # macOS / Linux
-# PowerShell: Remove-Item -Recurse -Force "<model-dir>\_wsm_<mode>_temp"
+rm -rf "<temp-dir>"          # macOS / Linux
+# PowerShell: Remove-Item -Recurse -Force "<temp-dir>"
 ```
 
 ### Picking the model name
@@ -643,9 +653,10 @@ This toolchain ships **MSL 4.x**. When authoring models, use the 4.x names — t
 
 - units: `Modelica.Units.SI.*` (not `Modelica.SIunits.*`)
 - source frequency parameter: `f` (not `freqHz`), e.g. `SineVoltage(V=.., f=..)`
-- declare the dependency as `annotation(uses(Modelica(version="4.0.0")))`
+- declare the dependency with the exact MSL version, e.g.
+  `annotation(uses(Modelica(version="4.1.0")))`
 
-Run `python3 "<scripts-dir>/wsm_run.py" --mode info` to confirm the exact MSL
+Run `python3 "<scripts-dir>/wsm_run.py" --mode info` to get the exact MSL
 version. `wsm_run.py` also warns on stderr if it spots a 3.2 name in the model.
 
 **When a flatten fails with `Element not found ... in Modelica...`**, the MSL

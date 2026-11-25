@@ -52,6 +52,10 @@ TITLE_BOOST = int(os.environ.get("DOCSEARCH_TITLE_BOOST", "2"))
 
 _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _TOKEN = re.compile(r"[a-z0-9]+")
+# A class name in a query: an identifier with an uppercase letter, optionally
+# dotted (``ComplexConstant``, ``Modelica.Blocks.Sources.Sine``).
+_CLASS_NAME = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*")
+_MSL_URL = re.compile(r"modelica://([^/]+)/(.+?)(?:-\d+)?$")
 
 
 def tokenize(text: str) -> list[str]:
@@ -59,6 +63,20 @@ def tokenize(text: str) -> list[str]:
     like ``CylinderDouble`` also match ``cylinder``/``double``."""
     text = _CAMEL.sub(" ", text)
     return _TOKEN.findall(text.lower())
+
+
+def class_names(text: str) -> list[str]:
+    """Words in a query that can only be class names: dotted, or CamelCase
+    (``ComplexConstant``, ``LimPID``). A plain capitalized word may just start
+    a sentence, and a lowerCamel word is usually a language keyword or operator."""
+    return [w for w in _CLASS_NAME.findall(text)
+            if "." in w or (w[0].isupper() and any(c.isupper() for c in w[1:]))]
+
+
+def msl_parts(url: str):
+    """``(top package, class name)`` of an MSL pseudo-URL, or None."""
+    m = _MSL_URL.match(url)
+    return (m.group(1), m.group(2)) if m else None
 
 
 def resolve_corpora(name: str) -> tuple[str, ...]:
@@ -77,6 +95,7 @@ class Index:
         self.df = defaultdict(int)          # term -> document frequency
         self.idf = {}
         self.avgdl = 0.0
+        self.by_class = defaultdict(list)   # MSL class name -> [doc_idx, ...]
         self._load(corpora)
         self._build()
 
@@ -87,6 +106,9 @@ class Index:
                 data = json.load(fh)
             for url, text in data.items():
                 title = text.lstrip().split("\n", 1)[0].lstrip("# ").strip()
+                parts = msl_parts(url) if corpus == "msl" else None
+                if parts:
+                    self.by_class[parts[1]].append(len(self.docs))
                 self.docs.append(
                     {
                         "id": len(self.docs),
@@ -130,8 +152,32 @@ class Index:
                 dl = doc["len"]
                 denom = tf + K1 * (1 - B + B * dl / self.avgdl)
                 scores[doc_id] += idf * (tf * (K1 + 1)) / denom
+        # In a library-only search, a class named exactly in the query ranks
+        # first: BM25 alone lets longer chunks that merely mention its words
+        # outrank the class itself. Mixed searches are left alone, where such
+        # names usually ask about the language or the tool instead.
+        named = [d["id"] for d in self.find_class_all(query)] \
+            if allow == {"msl"} else []
+        if named:
+            top = max(scores.values(), default=0.0)
+            for i in named:
+                scores[i] += top
         ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:k]
         return [(self.docs[i], s) for i, s in ranked]
+
+    def find_class(self, name: str):
+        """MSL entries for a class name, leaf (``Brake``) or dotted
+        (``Modelica.Mechanics.Translational.Components.Brake``). Entries record
+        only the top-level package, so a dotted name narrows by that alone."""
+        leaf = name.rsplit(".", 1)[-1]
+        hits = [self.docs[i] for i in self.by_class.get(leaf, [])]
+        if "." in name:
+            hits = [d for d in hits
+                    if name.startswith(msl_parts(d["url"])[0] + ".")] or hits
+        return hits
+
+    def find_class_all(self, query: str):
+        return [d for name in class_names(query) for d in self.find_class(name)]
 
     def get(self, url: str):
         for doc in self.docs:
