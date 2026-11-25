@@ -264,6 +264,15 @@ Building and simulating also need a C++ toolchain:
 Run `python3 "<scripts-dir>/wsm_run.py" --mode info` to see what the launcher
 discovered.
 
+### Checking the setup
+
+When the user asks whether the machine is ready for these skills, run
+`python3 <scripts-dir>/wsm_run.py --mode info` and report what it prints: the
+System Modeler installation it found and, on Windows, the compiler environment.
+If `InstallationGuide.md` sits next to the `scripts/` folder, as it does when
+the skills are installed as a plugin, it lists what each skill needs: follow its
+Steps 2, 4 and 5, and do not run the installer.
+
 ### Temporary directories
 
 The launcher works in a `_wsm_<mode>_temp/` directory next to the `.mo` file

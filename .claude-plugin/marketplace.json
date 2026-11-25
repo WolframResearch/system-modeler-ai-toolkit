@@ -1,0 +1,15 @@
+{
+  "name": "wolfram-system-modeler",
+  "description": "Agent skills for Wolfram System Modeler and Modelica.",
+  "owner": {
+    "name": "Wolfram Research",
+    "url": "https://www.wolfram.com"
+  },
+  "plugins": [
+    {
+      "name": "system-modeler",
+      "source": "./",
+      "description": "Agent skills for Wolfram System Modeler and Modelica: design, validate, simulate (incl. real-time), plot, diagnose and annotate models, plus searchable Modelica and System Modeler documentation."
+    }
+  ]
+}

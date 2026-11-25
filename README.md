@@ -69,35 +69,56 @@ flowchart LR
     D -. repeat any time .-> B
 ```
 
-## Get started in three steps
+## Get started
 
-### 1. Get the folder
+| Your assistant | Route |
+|---|---|
+| Claude Code or Claude Desktop | [Install the plugin](#claude-code-and-claude-desktop) |
+| Codex or any other assistant | [Use the folder](#codex-and-other-assistants) |
 
-Clone this repository or download it as a ZIP (*Code → Download ZIP* on GitHub)
-and uncompress it. Keep it as one folder; don't move the pieces apart. To update
-later, `git pull` (or redownload).
+The assistant sets the skills up for your environment and checks the
+requirements—for the simulation features, **Wolfram System Modeler**
+([free 30-day trial](https://www.wolfram.com/system-modeler/trial/)) plus a C++
+compiler; for post-processing, **Wolfram Language** connected to the assistant
+via the
+[Wolfram Local MCP](https://www.wolfram.com/artificial-intelligence/mcp/local/);
+and Python 3 for scripting.
 
-### 2. Start your AI assistant in it
+### Claude Code and Claude Desktop
 
-Point your assistant at the **uncompressed folder** so it can read the files
-and run commands. In a terminal, open the folder and start the assistant there
-(run `claude` for Claude Code, `codex` for Codex); in a desktop app such as the
-Claude Desktop app, choose this folder as the session's project folder.
+1. In a Claude Code or Claude Desktop session, run:
+   ```
+   /plugin marketplace add WolframResearch/system-modeler-ai-toolkit
+   ```
+2. Then run:
+   ```
+   /plugin install system-modeler@wolfram-system-modeler
+   ```
+3. Start a new session so the skills load, and ask:
 
-### 3. Ask it to read `InstallationGuide.md`
+   > "Check that this machine is ready to validate and simulate System Modeler
+   > models."
 
-> "Read `InstallationGuide.md` in this folder and install these skills for me."
+### Codex and other assistants
 
-The assistant sets the skills up for your environment (for Claude Code it runs
-the bundled installer) and checks the **requirements**—Python 3; for the
-simulation features, **Wolfram System Modeler**
-([free 30-day trial](https://www.wolfram.com/system-modeler/trial/)) plus a
-C++ compiler; and for post-processing, **Wolfram Language** connected to the
-assistant via the
-[Wolfram Local MCP](https://www.wolfram.com/artificial-intelligence/mcp/local/).
-It will flag anything missing; just follow its prompts.
+1. Clone this repository or download it as a ZIP (*Code → Download ZIP* on
+   GitHub) and uncompress it. Keep it as one folder; don't move the pieces
+   apart. To update later, `git pull` (or redownload).
+2. Start your assistant in that folder so it can read the files and run
+   commands: in a terminal, open the folder and start the assistant there (run
+   `codex` for Codex); in a desktop app, choose the folder as the session's
+   project folder.
+3. Ask:
 
-That's it—now try it out. Ask for something real, for example:
+   > "Read `InstallationGuide.md` in this folder and install these skills for me."
+
+   The assistant sets the skills up for your environment and checks your setup.
+
+On either route the assistant flags anything missing; just follow its prompts.
+
+### Try it out
+
+Ask for something real, for example:
 
 > "Create a hydraulic circuit with a pump and a double-acting cylinder, then
 > validate it to check that it compiles."
@@ -108,9 +129,9 @@ The assistant will use the relevant skills to build, check and explain—citing
 its sources where it looked things up.
 
 > [!NOTE]
-> Setting up in Claude Code, Codex or another agent, or curious about exactly
-> what each skill needs? It's all in [`InstallationGuide.md`](InstallationGuide.md)—a
-> guide your AI assistant reads to do the setup, not a manual you work through.
+> Curious about exactly what each skill needs? It's all in
+> [`InstallationGuide.md`](InstallationGuide.md), the guide your AI assistant
+> reads to install and check the skills.
 
 ## Videos
 
